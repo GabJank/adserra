@@ -1,3 +1,6 @@
+import { useMemo } from 'react';
+import { useWindowDimensions } from 'react-native';
+
 export const withOpacity = (hex: string, opacity: number) => {
   const cleanHex = hex.replace('#', '');
 
@@ -20,7 +23,6 @@ export const Palette = {
     700: '#13395E',
     800: '#0C263E',
     900: '#06131F',
-    main: '#F9F6EE',
   },
   royal: {
     100: '#d1dbe4',
@@ -32,7 +34,6 @@ export const Palette = {
     700: '#0e2c49',
     800: '#091e31',
     900: '#050f18',
-    main: '#F04D22',
   },
   orange: {
     100: '#e8dccc',
@@ -44,7 +45,6 @@ export const Palette = {
     700: '#532f00',
     800: '#371f00',
     900: '#1c1000',
-    main: '#776453',
   },
   neutral: {
     100: '#e2e2e2',
@@ -56,7 +56,6 @@ export const Palette = {
     700: '#434343',
     800: '#2c2c2c',
     900: '#161616',
-    main: '#45352A',
   },
   fullBlack: '#000000',
   fullWhite: '#FFFFFF',
@@ -81,7 +80,7 @@ export const Colors = {
   labelText: Palette.neutral[600],
   linkText: Palette.ocean[600],
   secondaryLinkText: Palette.neutral[600],
-  errorText: Palette.royal.main,
+  errorText: Palette.orange[500],
   fieldBorder: Palette.neutral[200],
   fieldBackground: Palette.neutral[100],
   checkboxBorder: Palette.neutral[200],
@@ -153,3 +152,52 @@ export const Spacing = {
   xl11: 160,
   xl12: 198,
 };
+
+const ResponsiveScale = {
+  baseWidth: 412,
+  baseHeight: 892,
+  minUiScale: 0.84,
+  maxUiScale: 1,
+  minTextScale: 0.92,
+} as const;
+
+const scaleNumberRecord = <T extends Record<string, number>>(
+  source: T,
+  scaleValue: (value: number) => number
+) => Object.fromEntries(Object.entries(source).map(([key, value]) => [key, scaleValue(value)])) as T;
+
+export function useScaledTheme() {
+  const { width, height } = useWindowDimensions();
+
+  return useMemo(() => {
+    const uiScale = Math.min(
+      ResponsiveScale.maxUiScale,
+      Math.max(
+        ResponsiveScale.minUiScale,
+        Math.min(width / ResponsiveScale.baseWidth, height / ResponsiveScale.baseHeight)
+      )
+    );
+    const textScale = Math.max(uiScale, ResponsiveScale.minTextScale);
+    const scale = (value: number) => Math.round(value * uiScale);
+    const scaleText = (value: number) => Math.round(value * textScale);
+
+    return {
+      Colors,
+      CornerRadius,
+      Spacing: scaleNumberRecord(Spacing, scale),
+      Heading: scaleNumberRecord(Heading, scaleText),
+      Fonts: {
+        ...Fonts,
+        title: scaleText(Fonts.title),
+        subtitle: scaleText(Fonts.subtitle),
+        bigSize: scaleText(Fonts.bigSize),
+        mediumSize: scaleText(Fonts.mediumSize),
+        minorSize: scaleText(Fonts.minorSize),
+      },
+      scale,
+      scaleText,
+      uiScale,
+      textScale,
+    };
+  }, [height, width]);
+}

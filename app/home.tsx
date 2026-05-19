@@ -1,10 +1,12 @@
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
-import { Image } from 'expo-image';
-import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useEffect, useMemo, useState } from 'react';
+import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { get, onValue, ref } from 'firebase/database';
 
-import { Colors, CornerRadius, Fonts, Heading, Spacing } from '@/constants/theme';
-import { auth } from '@/src/firebase';
+import { Colors, CornerRadius, useScaledTheme } from '@/constants/theme';
+import { AppHeader, AppTabBar } from '@/src/components';
+import { auth, database } from '@/src/firebase';
 
 const calendarDays = [
   ['29', '30', '31', '01', '02', '03', '04'],
@@ -14,31 +16,56 @@ const calendarDays = [
   ['26', '27', '28', '29', '30', '01', '02'],
 ];
 
+function getFirstName(name: string) {
+  return name.trim().split(/\s+/)[0] || 'Professor';
+}
+
 export default function HomeScreen() {
-  const insets = useSafeAreaInsets();
-  const professorName = auth.currentUser?.displayName || 'Professor';
+  const scaledTheme = useScaledTheme();
+  const styles = useMemo(() => createStyles(scaledTheme), [scaledTheme]);
+  const { Heading } = scaledTheme;
+  const fallbackProfessorName = getFirstName(auth.currentUser?.displayName || 'Professor');
+  const [professorName, setProfessorName] = useState(fallbackProfessorName);
+
+  useEffect(() => {
+    const uid = auth.currentUser?.uid;
+
+    if (!uid || !database) {
+      setProfessorName(fallbackProfessorName);
+      return;
+    }
+
+    const professorNameRef = ref(database, `users/${uid}/name`);
+
+    get(professorNameRef)
+      .catch((error) => {
+        console.error('Failed to fetch initial professor name:', error.code, error.message);
+      });
+
+    return onValue(
+      professorNameRef,
+      (snapshot) => {
+        const name = snapshot.val();
+
+        setProfessorName(typeof name === 'string' && name.trim() ? getFirstName(name) : fallbackProfessorName);
+      },
+      (error) => {
+        const errorCode = 'code' in error ? error.code : 'unknown';
+
+        console.error('Professor name listener failed:', errorCode, error.message);
+        setProfessorName(fallbackProfessorName);
+      }
+    );
+  }, [fallbackProfessorName]);
 
   return (
     <SafeAreaView style={styles.safeArea} edges={[]}>
-      <View style={[styles.header, { minHeight: 58 + insets.top, paddingTop: insets.top }]}>
-        <Image
-          source={require('@/assets/svg/logo-adserra.svg')}
-          style={styles.headerLogo}
-          contentFit="contain"
-          accessible
-          accessibilityLabel="ADSerra"
-        />
-        <TouchableOpacity accessibilityLabel="Notificações" hitSlop={Spacing.lg}>
-          <MaterialIcons name="notifications" size={Heading.h5} color={Colors.neutral[500]} />
-        </TouchableOpacity>
-      </View>
+      <AppHeader />
 
-      <ScrollView
-        contentContainerStyle={[styles.content, { paddingBottom: Spacing.xl8 + insets.bottom }]}
-        showsVerticalScrollIndicator={false}>
+      <View style={styles.content}>
         <View style={styles.greeting}>
-          <Text style={styles.greetingSmall}>Bom dia!</Text>
-          <Text style={styles.greetingName}>{`{${professorName}}!`}</Text>
+          <Text style={styles.greetingSmall}>Bom dia,</Text>
+          <Text style={styles.greetingName}>{`${professorName}!`}</Text>
         </View>
 
         <TouchableOpacity activeOpacity={0.9}>
@@ -53,7 +80,12 @@ export default function HomeScreen() {
             <Text style={styles.eventDescription}>
               Veja todos os registros e prêmios oferecidos aos professores
             </Text>
-            <MaterialIcons name="chevron-right" size={Heading.h2} color={Colors.card} style={styles.eventArrow} />
+            <MaterialIcons
+              name="chevron-right"
+              size={Heading.h2}
+              color={Colors.card}
+              style={styles.eventArrow}
+            />
           </View>
         </TouchableOpacity>
 
@@ -73,7 +105,9 @@ export default function HomeScreen() {
           <View style={styles.newsImagePlaceholder}>
             <MaterialIcons name="image" size={Heading.h1} color={Colors.ocean[200]} />
           </View>
-          <Text style={styles.newsTitle}>Lorem ipsum dolor sit amet, consectetur...</Text>
+          <Text style={styles.newsTitle}>
+            Lorem ipsum dolor sit amet, consectetur...
+          </Text>
           <Text style={styles.newsDescription}>
             Lorem ipsum dolor sit amet, consectetur adipiscing elit. Praesent vitae risus sed tellus ultrices scelerisque eu at augue. Maecenas ex odio...
           </Text>
@@ -84,7 +118,9 @@ export default function HomeScreen() {
             <View style={styles.sectionIconBox}>
               <MaterialIcons name="calendar-today" size={Heading.h5} color={Colors.neutral[800]} />
             </View>
-            <Text style={styles.sectionTitle}>CALENDÁRIO DE EVENTOS</Text>
+            <Text style={styles.sectionTitle}>
+              CALENDÁRIO DE EVENTOS
+            </Text>
           </View>
         </View>
 
@@ -92,14 +128,20 @@ export default function HomeScreen() {
           <View style={styles.calendarHeader}>
             <Text style={styles.calendarDate}>22 de Abril, 2026</Text>
             <View style={styles.calendarActions}>
-              <MaterialIcons name="chevron-left" size={Heading.h3} color={Colors.text} />
-              <MaterialIcons name="chevron-right" size={Heading.h3} color={Colors.text} />
+              <TouchableOpacity>
+                <MaterialIcons name="chevron-left" size={Heading.h2} color={Colors.text} />
+              </TouchableOpacity>
+              <TouchableOpacity>
+                <MaterialIcons name="chevron-right" size={Heading.h2} color={Colors.text} />
+              </TouchableOpacity>
             </View>
           </View>
 
           <View style={styles.weekRow}>
             {['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab', 'Dom'].map((day) => (
-              <Text key={day} style={styles.weekText}>{day}</Text>
+              <Text key={day} style={styles.weekText}>
+                {day}
+              </Text>
             ))}
           </View>
 
@@ -131,261 +173,200 @@ export default function HomeScreen() {
             </View>
           ))}
         </View>
-      </ScrollView>
-
-      <View style={[styles.tabBar, { paddingBottom: Math.max(insets.bottom, Spacing.xs) }]}>
-        {[
-          { icon: 'home', label: 'Home', active: true },
-          { icon: 'photo-camera', label: '' },
-          { icon: 'article', label: '' },
-          { icon: 'calendar-today', label: '' },
-          { icon: 'person', label: '' },
-        ].map((item) => (
-          <TouchableOpacity
-            key={item.icon}
-            activeOpacity={0.8}
-            style={[styles.tabItem, item.active && styles.activeTabItem]}>
-            <MaterialIcons
-              name={item.icon as keyof typeof MaterialIcons.glyphMap}
-              size={Heading.h4}
-              color={item.active ? Colors.ocean[700] : Colors.neutral[500]}
-            />
-            {item.label ? <Text style={styles.tabLabel}>{item.label}</Text> : null}
-          </TouchableOpacity>
-        ))}
       </View>
+
+      <AppTabBar activeTab="home" />
     </SafeAreaView>
   );
 }
 
-const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: Colors.card,
-    paddingHorizontal: Spacing.xl,
-    shadowColor: Colors.shadow,
-    shadowOffset: { width: 0, height: Spacing.xs },
-    shadowOpacity: 0.12,
-    shadowRadius: CornerRadius.lg,
-    elevation: Spacing.xs,
-  },
-  headerLogo: {
-    width: 122,
-    height: 32,
-  },
-  content: {
-    padding: Spacing.xl2,
-  },
-  greeting: {
-    marginBottom: Spacing.xl,
-  },
-  greetingSmall: {
-    color: Colors.text,
-    fontFamily: Fonts.interMedium,
-    fontSize: Fonts.subtitle,
-  },
-  greetingName: {
-    color: Colors.text,
-    fontFamily: Fonts.manropeBold,
-    fontSize: Heading.h3,
-  },
-  eventCard: {
-    minHeight: 175,
-    borderRadius: CornerRadius.xl,
-    backgroundColor: Colors.ocean[500],
-    padding: Spacing.xl,
-    shadowColor: Colors.shadow,
-    shadowOffset: { width: 0, height: Spacing.md },
-    shadowOpacity: 0.18,
-    shadowRadius: CornerRadius.xl,
-    elevation: Spacing.xs,
-  },
-  eventTopRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.lg,
-    marginBottom: Spacing.xl2,
-  },
-  eventIconBox: {
-    width: 36,
-    height: 36,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: CornerRadius.md,
-    backgroundColor: Colors.ocean[400],
-  },
-  eventEyebrow: {
-    color: Colors.card,
-    fontFamily: Fonts.interBold,
-    fontSize: Fonts.minorSize,
-  },
-  eventTitle: {
-    color: Colors.card,
-    fontFamily: Fonts.manropeBold,
-    fontSize: Fonts.title,
-    marginBottom: Spacing.xl2,
-  },
-  eventDescription: {
-    maxWidth: 220,
-    color: Colors.card,
-    fontFamily: Fonts.inter,
-    fontSize: Fonts.mediumSize,
-  },
-  eventArrow: {
-    position: 'absolute',
-    right: Spacing.lg,
-    bottom: Spacing.lg,
-  },
-  sectionHeader: {
-    minHeight: 54,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  sectionTitleWrap: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.lg,
-  },
-  sectionIconBox: {
-    width: 34,
-    height: 34,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: CornerRadius.md,
-    backgroundColor: Colors.card,
-  },
-  sectionTitle: {
-    color: Colors.text,
-    fontFamily: Fonts.interBold,
-    fontSize: Fonts.minorSize,
-  },
-  seeMore: {
-    color: Colors.text,
-    fontFamily: Fonts.interBold,
-    fontSize: Fonts.minorSize,
-  },
-  newsCard: {
-    marginBottom: Spacing.xl2,
-  },
-  newsImagePlaceholder: {
-    height: 96,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: CornerRadius.lg,
-    backgroundColor: Colors.card,
-    marginBottom: Spacing.lg,
-  },
-  newsTitle: {
-    color: Colors.text,
-    fontFamily: Fonts.manropeBold,
-    fontSize: Fonts.bigSize,
-    marginBottom: Spacing.lg,
-  },
-  newsDescription: {
-    color: Colors.neutral[500],
-    fontFamily: Fonts.inter,
-    fontSize: Fonts.minorSize,
-  },
-  calendarCard: {
-    borderRadius: CornerRadius.xl,
-    backgroundColor: Colors.card,
-    padding: Spacing.xl,
-    shadowColor: Colors.shadow,
-    shadowOffset: { width: 0, height: Spacing.md },
-    shadowOpacity: 0.12,
-    shadowRadius: CornerRadius.xl,
-    elevation: Spacing.xs,
-  },
-  calendarHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: Spacing.lg,
-  },
-  calendarDate: {
-    color: Colors.text,
-    fontFamily: Fonts.interBold,
-    fontSize: Fonts.mediumSize,
-  },
-  calendarActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  weekRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: Spacing.md,
-  },
-  weekText: {
-    width: 32,
-    color: Colors.text,
-    fontFamily: Fonts.interBold,
-    fontSize: Fonts.minorSize,
-    textAlign: 'center',
-  },
-  daysRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: Spacing.xs,
-  },
-  dayCell: {
-    width: 32,
-    height: 26,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: CornerRadius.md,
-  },
-  selectedDayCell: {
-    backgroundColor: Colors.ocean[500],
-  },
-  eventDayCell: {
-    backgroundColor: Colors.royal.main,
-  },
-  dayText: {
-    color: Colors.text,
-    fontFamily: Fonts.interSemiBold,
-    fontSize: Fonts.minorSize,
-  },
-  selectedDayText: {
-    color: Colors.card,
-  },
-  eventDayText: {
-    color: Colors.text,
-  },
-  tabBar: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
-    minHeight: 62,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-around',
-    backgroundColor: Colors.card,
-    borderTopWidth: 1,
-    borderTopColor: Colors.fieldBorder,
-    paddingHorizontal: Spacing.xs,
-  },
-  tabItem: {
-    width: 58,
-    height: 54,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: CornerRadius.sm,
-  },
-  activeTabItem: {
-    backgroundColor: Colors.ocean[200],
-  },
-  tabLabel: {
-    color: Colors.ocean[700],
-    fontFamily: Fonts.interSemiBold,
-    fontSize: Fonts.minorSize,
-    marginTop: Spacing.xs2,
-  },
-});
+function createStyles({ Fonts, Heading, Spacing, scale }: ReturnType<typeof useScaledTheme>) {
+  return StyleSheet.create({
+    safeArea: {
+      flex: 1,
+    },
+    content: {
+      flex: 1,
+      justifyContent: 'space-around',
+      padding: Spacing.xl,
+      paddingBottom: Spacing.xl8,
+    },
+    greeting: {
+      marginBottom: Spacing.lg,
+    },
+    greetingSmall: {
+      color: Colors.text,
+      fontFamily: Fonts.interMedium,
+      fontSize: Fonts.subtitle,
+    },
+    greetingName: {
+      color: Colors.text,
+      fontFamily: Fonts.manropeBold,
+      fontSize: Heading.h3,
+    },
+    eventCard: {
+      minHeight: scale(145),
+      borderRadius: CornerRadius.xl,
+      backgroundColor: Colors.ocean[500],
+      padding: Spacing.lg,
+      shadowColor: Colors.shadow,
+      shadowOffset: { width: 0, height: Spacing.md },
+      shadowOpacity: 0.18,
+      shadowRadius: CornerRadius.xl,
+      elevation: Spacing.xs,
+    },
+    eventTopRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: Spacing.lg,
+      marginBottom: Spacing.lg,
+    },
+    eventIconBox: {
+      width: scale(36),
+      height: scale(36),
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: CornerRadius.md,
+      backgroundColor: Colors.ocean[400],
+    },
+    eventEyebrow: {
+      color: Colors.card,
+      fontFamily: Fonts.interBold,
+      fontSize: Fonts.minorSize,
+    },
+    eventTitle: {
+      color: Colors.card,
+      fontFamily: Fonts.manropeBold,
+      fontSize: Fonts.title,
+      marginBottom: Spacing.lg,
+    },
+    eventDescription: {
+      maxWidth: scale(220),
+      color: Colors.card,
+      fontFamily: Fonts.inter,
+      fontSize: Fonts.mediumSize,
+    },
+    eventArrow: {
+      position: 'absolute',
+      right: Spacing.lg,
+      bottom: Spacing.lg,
+    },
+    sectionHeader: {
+      minHeight: scale(44),
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+    },
+    sectionTitleWrap: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: Spacing.lg,
+    },
+    sectionIconBox: {
+      width: scale(34),
+      height: scale(34),
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: CornerRadius.md,
+      backgroundColor: Colors.card,
+    },
+    sectionTitle: {
+      color: Colors.text,
+      fontFamily: Fonts.interBold,
+      fontSize: Fonts.minorSize,
+    },
+    seeMore: {
+      color: Colors.text,
+      fontFamily: Fonts.interBold,
+      fontSize: Fonts.minorSize,
+    },
+    newsCard: {
+      marginBottom: Spacing.xl2,
+    },
+    newsImagePlaceholder: {
+      height: scale(78),
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: CornerRadius.lg,
+      backgroundColor: Colors.card,
+      marginBottom: Spacing.md,
+    },
+    newsTitle: {
+      color: Colors.text,
+      fontFamily: Fonts.manropeBold,
+      fontSize: Fonts.bigSize,
+      marginBottom: Spacing.md,
+    },
+    newsDescription: {
+      color: Colors.neutral[500],
+      fontFamily: Fonts.inter,
+      fontSize: Fonts.minorSize,
+    },
+    calendarCard: {
+      borderRadius: CornerRadius.xl,
+      backgroundColor: Colors.card,
+      padding: Spacing.lg,
+      shadowColor: Colors.shadow,
+      shadowOffset: { width: 0, height: Spacing.md },
+      shadowOpacity: 0.12,
+      shadowRadius: CornerRadius.xl,
+      elevation: Spacing.xs,
+    },
+    calendarHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginBottom: Spacing.md,
+    },
+    calendarDate: {
+      color: Colors.text,
+      fontFamily: Fonts.interBold,
+      fontSize: Fonts.mediumSize,
+    },
+    calendarActions: {
+      flexDirection: 'row',
+      alignItems: 'center',
+    },
+    weekRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      marginBottom: Spacing.xs,
+    },
+    weekText: {
+      width: scale(32),
+      color: Colors.text,
+      fontFamily: Fonts.interBold,
+      fontSize: Fonts.minorSize,
+      textAlign: 'center',
+    },
+    daysRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      marginBottom: Spacing.xs2,
+    },
+    dayCell: {
+      width: scale(32),
+      height: scale(26),
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: CornerRadius.md,
+    },
+    selectedDayCell: {
+      backgroundColor: Colors.ocean[500],
+    },
+    eventDayCell: {
+      backgroundColor: Colors.orange[200],
+    },
+    dayText: {
+      color: Colors.text,
+      fontFamily: Fonts.interSemiBold,
+      fontSize: Fonts.minorSize,
+    },
+    selectedDayText: {
+      color: Colors.card,
+    },
+    eventDayText: {
+      color: Colors.text,
+    },
+  });
+}
