@@ -10,7 +10,7 @@ export default function IndexScreen() {
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user: User | null) => {
-      // await setRememberMePreference(false); <- Descomente esta linha para limpar a preferência de "Lembrar-me" a cada inicialização (útil para testes)
+      //await setRememberMePreference(false); //<- Descomente esta linha para limpar a preferência de "Lembrar-me" a cada inicialização (útil para testes)
       const rememberMe = await getRememberMePreference();
 
       if (user && rememberMe) {

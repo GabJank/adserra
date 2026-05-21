@@ -5,16 +5,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { get, onValue, ref } from 'firebase/database';
 
 import { Colors, CornerRadius, useScaledTheme } from '@/constants/theme';
-import { AppHeader, AppTabBar } from '@/src/components';
+import { AppHeader, AppTabBar, EventCalendar } from '@/src/components';
 import { auth, database } from '@/src/firebase';
 
-const calendarDays = [
-  ['29', '30', '31', '01', '02', '03', '04'],
-  ['05', '06', '07', '08', '09', '10', '11'],
-  ['12', '13', '14', '15', '16', '17', '18'],
-  ['19', '20', '21', '22', '23', '24', '25'],
-  ['26', '27', '28', '29', '30', '01', '02'],
-];
+const eventDates = ['2026-04-23', '2026-04-30'];
 
 function getFirstName(name: string) {
   return name.trim().split(/\s+/)[0] || 'Professor';
@@ -124,55 +118,7 @@ export default function HomeScreen() {
           </View>
         </View>
 
-        <View style={styles.calendarCard}>
-          <View style={styles.calendarHeader}>
-            <Text style={styles.calendarDate}>22 de Abril, 2026</Text>
-            <View style={styles.calendarActions}>
-              <TouchableOpacity>
-                <MaterialIcons name="chevron-left" size={Heading.h2} color={Colors.text} />
-              </TouchableOpacity>
-              <TouchableOpacity>
-                <MaterialIcons name="chevron-right" size={Heading.h2} color={Colors.text} />
-              </TouchableOpacity>
-            </View>
-          </View>
-
-          <View style={styles.weekRow}>
-            {['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab', 'Dom'].map((day) => (
-              <Text key={day} style={styles.weekText}>
-                {day}
-              </Text>
-            ))}
-          </View>
-
-          {calendarDays.map((week) => (
-            <View key={week.join('-')} style={styles.daysRow}>
-              {week.map((day) => {
-                const isSelected = day === '22';
-                const isEventDay = day === '23' || day === '30';
-
-                return (
-                  <View
-                    key={`${week.join('-')}-${day}`}
-                    style={[
-                      styles.dayCell,
-                      isSelected && styles.selectedDayCell,
-                      isEventDay && styles.eventDayCell,
-                    ]}>
-                    <Text
-                      style={[
-                        styles.dayText,
-                        isSelected && styles.selectedDayText,
-                        isEventDay && styles.eventDayText,
-                      ]}>
-                      {day}
-                    </Text>
-                  </View>
-                );
-              })}
-            </View>
-          ))}
-        </View>
+        <EventCalendar eventDates={eventDates} />
       </View>
 
       <AppTabBar activeTab="home" />
@@ -301,72 +247,6 @@ function createStyles({ Fonts, Heading, Spacing, scale }: ReturnType<typeof useS
       color: Colors.neutral[500],
       fontFamily: Fonts.inter,
       fontSize: Fonts.minorSize,
-    },
-    calendarCard: {
-      borderRadius: CornerRadius.xl,
-      backgroundColor: Colors.card,
-      padding: Spacing.lg,
-      shadowColor: Colors.shadow,
-      shadowOffset: { width: 0, height: Spacing.md },
-      shadowOpacity: 0.12,
-      shadowRadius: CornerRadius.xl,
-      elevation: Spacing.xs,
-    },
-    calendarHeader: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      marginBottom: Spacing.md,
-    },
-    calendarDate: {
-      color: Colors.text,
-      fontFamily: Fonts.interBold,
-      fontSize: Fonts.mediumSize,
-    },
-    calendarActions: {
-      flexDirection: 'row',
-      alignItems: 'center',
-    },
-    weekRow: {
-      flexDirection: 'row',
-      justifyContent: 'space-between',
-      marginBottom: Spacing.xs,
-    },
-    weekText: {
-      width: scale(32),
-      color: Colors.text,
-      fontFamily: Fonts.interBold,
-      fontSize: Fonts.minorSize,
-      textAlign: 'center',
-    },
-    daysRow: {
-      flexDirection: 'row',
-      justifyContent: 'space-between',
-      marginBottom: Spacing.xs2,
-    },
-    dayCell: {
-      width: scale(32),
-      height: scale(26),
-      alignItems: 'center',
-      justifyContent: 'center',
-      borderRadius: CornerRadius.md,
-    },
-    selectedDayCell: {
-      backgroundColor: Colors.ocean[500],
-    },
-    eventDayCell: {
-      backgroundColor: Colors.orange[200],
-    },
-    dayText: {
-      color: Colors.text,
-      fontFamily: Fonts.interSemiBold,
-      fontSize: Fonts.minorSize,
-    },
-    selectedDayText: {
-      color: Colors.card,
-    },
-    eventDayText: {
-      color: Colors.text,
     },
   });
 }
