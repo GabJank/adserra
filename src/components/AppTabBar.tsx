@@ -6,7 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useScaledTheme } from '@/constants/theme';
 
-export type AppTabKey = 'home' | 'camera' | 'news' | 'calendar' | 'profile';
+export type AppTabKey = 'home' | 'events' | 'news' | 'calendar' | 'profile';
 
 export type AppTabItem = {
   key: AppTabKey;
@@ -22,11 +22,11 @@ export type AppTabBarProps = {
 };
 
 const defaultItems: AppTabItem[] = [
-  { key: 'home', icon: 'home', label: 'Home', href: '/home' },
-  { key: 'camera', icon: 'photo-camera' },
-  { key: 'news', icon: 'article' },
-  { key: 'calendar', icon: 'calendar-today' },
-  { key: 'profile', icon: 'person' },
+  { key: 'home', icon: 'home', label: 'Home', href: '/hub/home' },
+  { key: 'events', icon: 'photo-camera', label: 'Eventos', href: '/hub/events' },
+  { key: 'news', icon: 'article', label: 'Notícias', href: '/hub/news' },
+  { key: 'calendar', icon: 'calendar-today', label: 'Calendário', href: '/hub/calendar' },
+  { key: 'profile', icon: 'person', label: 'Perfil', href: '/hub/profile/profile' },
 ];
 
 export function AppTabBar({ activeTab, items = defaultItems, onTabPress }: AppTabBarProps) {
@@ -73,7 +73,7 @@ export function AppTabBar({ activeTab, items = defaultItems, onTabPress }: AppTa
               size={Heading.h5}
               color={isActive ? Colors.ocean[700] : Colors.neutral[500]}
             />
-            {item.label ? <Text style={styles.tabLabel}>{item.label}</Text> : null}
+            {isActive && item.label ? <Text style={styles.tabLabel}>{item.label}</Text> : null}
           </TouchableOpacity>
         );
       })}
@@ -88,7 +88,7 @@ function createStyles({ Colors, CornerRadius, Fonts, Spacing, scale }: ReturnTyp
       left: 0,
       right: 0,
       bottom: 0,
-      minHeight: scale(56),
+      minHeight: scale(64),
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-around',
@@ -100,13 +100,14 @@ function createStyles({ Colors, CornerRadius, Fonts, Spacing, scale }: ReturnTyp
       elevation: Spacing.xl3,
     },
     tabItem: {
-      width: scale(54),
-      height: scale(48),
+      width: scale(73),
+      height: scale(35),
       alignItems: 'center',
       justifyContent: 'center',
       borderRadius: CornerRadius.sm,
     },
     activeTabItem: {
+      height: scale(54),
       backgroundColor: Colors.ocean[200],
     },
     tabLabel: {

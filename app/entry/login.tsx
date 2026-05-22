@@ -3,7 +3,7 @@ import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import { FirebaseError } from 'firebase/app';
-import { signInWithEmailAndPassword } from 'firebase/auth';
+import { sendPasswordResetEmail, signInWithEmailAndPassword } from 'firebase/auth';
 import { useState } from 'react';
 import {
   KeyboardAvoidingView,
@@ -27,6 +27,7 @@ export default function LoginScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isResettingPassword, setIsResettingPassword] = useState(false);
 
   const handleLogin = async () => {
     if (!email.trim() || !password) {
@@ -39,7 +40,7 @@ export default function LoginScreen() {
     try {
       await signInWithEmailAndPassword(auth, email.trim(), password);
       await setRememberMePreference(rememberMe);
-      router.replace('/home');
+      router.replace('/hub/home');
     } catch (error) {
       if (error instanceof FirebaseError) {
         Alert.alert('Erro ao entrar', getLoginErrorMessage(error.code));
@@ -48,6 +49,33 @@ export default function LoginScreen() {
       }
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handleForgotPassword = async () => {
+    const trimmedEmail = email.trim();
+
+    if (!trimmedEmail) {
+      Alert.alert('Informe seu e-mail', 'Digite seu e-mail no campo acima para receber o link de recuperação.');
+      return;
+    }
+
+    setIsResettingPassword(true);
+
+    try {
+      await sendPasswordResetEmail(auth, trimmedEmail);
+      Alert.alert(
+        'E-mail enviado',
+        'Se o e-mail estiver cadastrado, você receberá um link para redefinir sua senha.'
+      );
+    } catch (error) {
+      if (error instanceof FirebaseError) {
+        Alert.alert('Não foi possível enviar', getPasswordResetErrorMessage(error.code));
+      } else {
+        Alert.alert('Não foi possível enviar', 'Tente novamente em alguns instantes.');
+      }
+    } finally {
+      setIsResettingPassword(false);
     }
   };
 
@@ -124,8 +152,14 @@ export default function LoginScreen() {
             <Text style={styles.optionText}>Lembrar de mim</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity>
-            <Text style={styles.link}>Esqueceu sua senha?</Text>
+          <TouchableOpacity
+            accessibilityRole="button"
+            activeOpacity={0.75}
+            disabled={isResettingPassword}
+            onPress={handleForgotPassword}>
+            <Text style={[styles.link, isResettingPassword && styles.linkDisabled]}>
+              {isResettingPassword ? 'Enviando...' : 'Esqueceu sua senha?'}
+            </Text>
           </TouchableOpacity>
         </View>
 
@@ -144,7 +178,7 @@ export default function LoginScreen() {
 
         <View style={styles.registerRow}>
           <Text style={styles.registerText}>Não faz parte? </Text>
-          <TouchableOpacity>
+          <TouchableOpacity accessibilityRole="button" activeOpacity={0.75} onPress={() => router.push('/entry/register')}>
             <Text style={styles.registerLink}>Solicitar registro</Text>
           </TouchableOpacity>
         </View>
@@ -266,6 +300,9 @@ const styles = StyleSheet.create({
     fontSize: Fonts.minorSize,
     textDecorationLine: 'underline',
   },
+  linkDisabled: {
+    opacity: 0.6,
+  },
   submitButton: {
     minHeight: 52,
     alignItems: 'center',
@@ -315,5 +352,20 @@ function getLoginErrorMessage(code: string) {
       return 'Sem conexão com a internet.';
     default:
       return 'Não foi possível entrar. Tente novamente.';
+  }
+}
+
+function getPasswordResetErrorMessage(code: string) {
+  switch (code) {
+    case 'auth/invalid-email':
+      return 'E-mail inválido.';
+    case 'auth/user-disabled':
+      return 'Este usuário foi desativado.';
+    case 'auth/too-many-requests':
+      return 'Muitas tentativas. Tente novamente mais tarde.';
+    case 'auth/network-request-failed':
+      return 'Sem conexão com a internet.';
+    default:
+      return 'Não foi possível enviar o e-mail de recuperação.';
   }
 }

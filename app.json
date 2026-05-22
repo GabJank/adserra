@@ -39,6 +39,12 @@
             "backgroundColor": "#000000"
           }
         }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Permita que o ADSerra acesse suas fotos para atualizar sua foto de perfil."
+        }
       ]
     ],
     "experiments": {

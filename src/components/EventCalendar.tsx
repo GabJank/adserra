@@ -24,6 +24,7 @@ export type EventCalendarProps = {
   eventDates?: (Date | string)[];
   initialDate?: Date;
   onSelectDate?: (date: Date) => void;
+  selectedDate?: Date;
   style?: StyleProp<ViewStyle>;
 };
 
@@ -124,6 +125,7 @@ export function EventCalendar({
   eventDates = [],
   initialDate = new Date(),
   onSelectDate,
+  selectedDate: controlledSelectedDate,
   style,
 }: EventCalendarProps) {
   const scaledTheme = useScaledTheme();
@@ -133,6 +135,18 @@ export function EventCalendar({
   const [selectedDate, setSelectedDate] = useState(() => startOfDay(initialDate));
   const [visibleMonth, setVisibleMonth] = useState(() => startOfMonth(initialDate));
   const [isFollowingToday, setIsFollowingToday] = useState(() => isSameDay(initialDate, new Date()));
+
+  useEffect(() => {
+    if (!controlledSelectedDate) {
+      return;
+    }
+
+    const nextSelectedDate = startOfDay(controlledSelectedDate);
+
+    setSelectedDate(nextSelectedDate);
+    setVisibleMonth(startOfMonth(nextSelectedDate));
+    setIsFollowingToday(isSameDay(nextSelectedDate, today));
+  }, [controlledSelectedDate, today]);
 
   useEffect(() => {
     const now = new Date();
@@ -179,7 +193,7 @@ export function EventCalendar({
         <Text style={styles.calendarDate}>{formatCalendarTitle(selectedDate)}</Text>
         <View style={styles.calendarActions}>
           <TouchableOpacity
-            accessibilityLabel="M\u00eas anterior"
+            accessibilityLabel="Mês anterior"
             activeOpacity={0.7}
             hitSlop={8}
             onPress={() => changeMonth(-1)}
@@ -187,7 +201,7 @@ export function EventCalendar({
             <MaterialIcons name="chevron-left" size={Heading.h2} color={Colors.text} />
           </TouchableOpacity>
           <TouchableOpacity
-            accessibilityLabel="Pr\u00f3ximo m\u00eas"
+            accessibilityLabel="Próximo mês"
             activeOpacity={0.7}
             hitSlop={8}
             onPress={() => changeMonth(1)}
@@ -247,7 +261,7 @@ function createStyles({ Fonts, Spacing, scale }: ReturnType<typeof useScaledThem
     calendarCard: {
       borderRadius: CornerRadius.xl,
       backgroundColor: Colors.card,
-      padding: Spacing.lg,
+      padding: Spacing.md,
       shadowColor: Colors.shadow,
       shadowOffset: { width: 0, height: Spacing.md },
       shadowOpacity: 0.12,
@@ -290,7 +304,7 @@ function createStyles({ Fonts, Spacing, scale }: ReturnType<typeof useScaledThem
     daysRow: {
       flexDirection: 'row',
       justifyContent: 'space-between',
-      marginBottom: Spacing.xs2,
+      marginBottom: Spacing.none,
     },
     dayCell: {
       width: scale(32),

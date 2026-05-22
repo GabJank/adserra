@@ -1,68 +1,28 @@
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
-import { useEffect, useMemo, useState } from 'react';
+import { Image } from 'expo-image';
+import { useRouter } from 'expo-router';
+import { useMemo } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { get, onValue, ref } from 'firebase/database';
 
 import { Colors, CornerRadius, useScaledTheme } from '@/constants/theme';
-import { AppHeader, AppTabBar, EventCalendar } from '@/src/components';
-import { auth, database } from '@/src/firebase';
-
-const eventDates = ['2026-04-23', '2026-04-30'];
-
-function getFirstName(name: string) {
-  return name.trim().split(/\s+/)[0] || 'Professor';
-}
+import { useAppData } from '@/src/app-data';
+import { EventCalendar } from '@/src/components';
 
 export default function HomeScreen() {
+  const router = useRouter();
+  const { eventDates, firstNews, professorName } = useAppData();
   const scaledTheme = useScaledTheme();
   const styles = useMemo(() => createStyles(scaledTheme), [scaledTheme]);
   const { Heading } = scaledTheme;
-  const fallbackProfessorName = getFirstName(auth.currentUser?.displayName || 'Professor');
-  const [professorName, setProfessorName] = useState(fallbackProfessorName);
-
-  useEffect(() => {
-    const uid = auth.currentUser?.uid;
-
-    if (!uid || !database) {
-      setProfessorName(fallbackProfessorName);
-      return;
-    }
-
-    const professorNameRef = ref(database, `users/${uid}/name`);
-
-    get(professorNameRef)
-      .catch((error) => {
-        console.error('Failed to fetch initial professor name:', error.code, error.message);
-      });
-
-    return onValue(
-      professorNameRef,
-      (snapshot) => {
-        const name = snapshot.val();
-
-        setProfessorName(typeof name === 'string' && name.trim() ? getFirstName(name) : fallbackProfessorName);
-      },
-      (error) => {
-        const errorCode = 'code' in error ? error.code : 'unknown';
-
-        console.error('Professor name listener failed:', errorCode, error.message);
-        setProfessorName(fallbackProfessorName);
-      }
-    );
-  }, [fallbackProfessorName]);
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={[]}>
-      <AppHeader />
-
-      <View style={styles.content}>
+    <View style={styles.content}>
         <View style={styles.greeting}>
           <Text style={styles.greetingSmall}>Bom dia,</Text>
           <Text style={styles.greetingName}>{`${professorName}!`}</Text>
         </View>
 
-        <TouchableOpacity activeOpacity={0.9}>
+        <TouchableOpacity activeOpacity={0.9} onPress={() => router.replace('/hub/events')}>
           <View style={styles.eventCard}>
             <View style={styles.eventTopRow}>
               <View style={styles.eventIconBox}>
@@ -90,20 +50,24 @@ export default function HomeScreen() {
             </View>
             <Text style={styles.sectionTitle}>NOTÍCIAS</Text>
           </View>
-          <TouchableOpacity>
+          <TouchableOpacity activeOpacity={0.8} onPress={() => router.replace('/hub/news')}>
             <Text style={styles.seeMore}>Ver mais</Text>
           </TouchableOpacity>
         </View>
 
         <View style={styles.newsCard}>
-          <View style={styles.newsImagePlaceholder}>
-            <MaterialIcons name="image" size={Heading.h1} color={Colors.ocean[200]} />
-          </View>
-          <Text style={styles.newsTitle}>
-            Lorem ipsum dolor sit amet, consectetur...
+          {firstNews?.photoUrl ? (
+            <Image source={{ uri: firstNews.photoUrl }} style={styles.newsImage} contentFit="cover" />
+          ) : (
+            <View style={styles.newsImagePlaceholder}>
+              <MaterialIcons name="image" size={Heading.h1} color={Colors.ocean[200]} />
+            </View>
+          )}
+          <Text style={styles.newsTitle} numberOfLines={1}>
+            {firstNews?.title || 'Nenhuma noticia cadastrada'}
           </Text>
-          <Text style={styles.newsDescription}>
-            Lorem ipsum dolor sit amet, consectetur adipiscing elit. Praesent vitae risus sed tellus ultrices scelerisque eu at augue. Maecenas ex odio...
+          <Text style={styles.newsDescription} numberOfLines={2}>
+            {firstNews?.description || 'Cadastre uma noticia no Realtime Database para exibir aqui.'}
           </Text>
         </View>
 
@@ -120,17 +84,11 @@ export default function HomeScreen() {
 
         <EventCalendar eventDates={eventDates} />
       </View>
-
-      <AppTabBar activeTab="home" />
-    </SafeAreaView>
   );
 }
 
 function createStyles({ Fonts, Heading, Spacing, scale }: ReturnType<typeof useScaledTheme>) {
   return StyleSheet.create({
-    safeArea: {
-      flex: 1,
-    },
     content: {
       flex: 1,
       justifyContent: 'space-around',
@@ -228,6 +186,12 @@ function createStyles({ Fonts, Heading, Spacing, scale }: ReturnType<typeof useS
     },
     newsCard: {
       marginBottom: Spacing.xl2,
+    },
+    newsImage: {
+      height: scale(78),
+      borderRadius: CornerRadius.lg,
+      backgroundColor: Colors.card,
+      marginBottom: Spacing.md,
     },
     newsImagePlaceholder: {
       height: scale(78),
