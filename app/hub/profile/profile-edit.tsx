@@ -3,7 +3,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { updatePassword } from 'firebase/auth';
 import { set, ref } from 'firebase/database';
 import { useMemo, useState } from 'react';
-import { Alert, KeyboardAvoidingView, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Alert, KeyboardAvoidingView, Modal, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 import { Colors, useScaledTheme } from '@/constants/theme';
 import { useAppData, type UserProfile } from '@/src/app-data';
@@ -202,6 +202,10 @@ function formatSinceDuration(since: string) {
   return 'Hoje';
 }
 
+async function submitAssociationRequest() {
+  return Promise.resolve();
+}
+
 export default function ProfileEditScreen() {
   const router = useRouter();
   const { field } = useLocalSearchParams<{ field?: string }>();
@@ -213,11 +217,15 @@ export default function ProfileEditScreen() {
   const statusTitle = hasAccountStatus ? `${formatStatusTitle(accountStatus)} há` : formatStatusTitle(accountStatus);
   const statusValue = hasAccountStatus ? formatSinceDuration(userProfile?.since || '') : 'Aguardando aprovação';
   const showStatusCheck = hasVerifiedStatus(accountStatus);
+  const canRequestAssociation = editableField === 'status' && !showStatusCheck;
   const [value, setValue] = useState(() =>
     isProfileEditableField(editableField) ? formatFieldValue(editableField, userProfile?.[editableField] ?? '') : ''
   );
   const [confirmValue, setConfirmValue] = useState('');
   const [isSaving, setIsSaving] = useState(false);
+  const [isAssociationConfirmVisible, setIsAssociationConfirmVisible] = useState(false);
+  const [isAssociationRequestRegistered, setIsAssociationRequestRegistered] = useState(false);
+  const [isSubmittingAssociationRequest, setIsSubmittingAssociationRequest] = useState(false);
   const scaledTheme = useScaledTheme();
   const styles = useMemo(() => createStyles(scaledTheme), [scaledTheme]);
 
@@ -265,6 +273,35 @@ export default function ProfileEditScreen() {
       setIsSaving(false);
     }
   };
+
+  const handleAssociationRequest = async () => {
+    setIsAssociationConfirmVisible(false);
+    setIsSubmittingAssociationRequest(true);
+
+    try {
+      await submitAssociationRequest();
+      setIsAssociationRequestRegistered(true);
+    } catch (error) {
+      console.error('Failed to submit association request:', error);
+      Alert.alert('Erro', 'Não foi possível registrar a solicitação.');
+    } finally {
+      setIsSubmittingAssociationRequest(false);
+    }
+  };
+
+  if (editableField === 'status' && isAssociationRequestRegistered) {
+    return (
+      <View style={styles.successContent}>
+        <Text style={styles.successTitle}>Assinatura Registrada!</Text>
+        <View style={styles.successIconWrap}>
+          <MaterialIcons name="check" size={72} color={Colors.ocean[600]} />
+        </View>
+        <Text style={styles.successDescription}>
+          Aguarde até 24 horas para o retorno da assinatura. Verifique sua caixa de e-mail para prosseguir.
+        </Text>
+      </View>
+    );
+  }
 
   return (
     <KeyboardAvoidingView
@@ -333,12 +370,64 @@ export default function ProfileEditScreen() {
           )}
         </View>
 
+        {canRequestAssociation ? (
+          <TouchableOpacity
+            disabled={isSubmittingAssociationRequest}
+            onPress={() => setIsAssociationConfirmVisible(true)}
+            style={[styles.card, styles.statusCard, styles.associationCard]}>
+            <View style={styles.statusRow}>
+              <View style={styles.statusTextBlock}>
+                <View style={styles.associationTitleRow}>
+                  <MaterialIcons name="business-center" size={24} color={Colors.ocean[600]} />
+                  <Text style={styles.statusTitle}>Associar-se?</Text>
+                </View>
+                <Text style={styles.statusValue}>
+                  Aproveite os inúmeros prêmios e eventos da ADSerra
+                </Text>
+              </View>
+              <MaterialIcons name="chevron-right" size={32} color={Colors.neutral[500]} />
+            </View>
+          </TouchableOpacity>
+        ) : null}
+
         {editableField !== 'status' ? (
           <TouchableOpacity activeOpacity={0.86} disabled={isSaving} onPress={handleSave} style={styles.saveButton}>
             <Text style={styles.saveText}>{isSaving ? 'Salvando...' : 'Salvar alteracao'}</Text>
           </TouchableOpacity>
         ) : null}
       </View>
+
+      <Modal
+        animationType="fade"
+        onRequestClose={() => setIsAssociationConfirmVisible(false)}
+        transparent
+        visible={isAssociationConfirmVisible}>
+        <View style={styles.modalBackdrop}>
+          <View style={styles.confirmDialog}>
+            <Text style={styles.confirmTitle}>Tem certeza?</Text>
+            <Text style={styles.confirmDescription}>
+              Após assinar a ADSerra, terá cobranças recorrentes.
+            </Text>
+
+            <View style={styles.confirmActions}>
+              <TouchableOpacity
+                activeOpacity={0.8}
+                disabled={isSubmittingAssociationRequest}
+                onPress={() => setIsAssociationConfirmVisible(false)}
+                style={styles.confirmButton}>
+                <Text style={styles.confirmNoText}>Não</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                activeOpacity={0.8}
+                disabled={isSubmittingAssociationRequest}
+                onPress={handleAssociationRequest}
+                style={styles.confirmButton}>
+                <Text style={styles.confirmYesText}>{isSubmittingAssociationRequest ? 'Enviando...' : 'Sim'}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </KeyboardAvoidingView>
   );
 }
@@ -430,6 +519,14 @@ function createStyles({ Colors, CornerRadius, Fonts, Heading, Spacing, scale }: 
       fontFamily: Fonts.interBold,
       fontSize: Fonts.bigSize,
     },
+    associationCard: {
+      marginTop: Spacing.lg,
+    },
+    associationTitleRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: Spacing.lg,
+    },
     saveButton: {
       minHeight: scale(48),
       alignItems: 'center',
@@ -442,6 +539,88 @@ function createStyles({ Colors, CornerRadius, Fonts, Heading, Spacing, scale }: 
       color: Colors.card,
       fontFamily: Fonts.interBold,
       fontSize: Fonts.bigSize,
+    },
+    modalBackdrop: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: 'rgba(0, 0, 0, 0.42)',
+      paddingHorizontal: Spacing.xl2,
+    },
+    confirmDialog: {
+      width: '100%',
+      maxWidth: scale(360),
+      borderRadius: CornerRadius.xl3,
+      backgroundColor: Colors.card,
+      paddingHorizontal: Spacing.xl3,
+      paddingTop: Spacing.xl3,
+      paddingBottom: Spacing.lg,
+    },
+    confirmTitle: {
+      color: Colors.text,
+      fontFamily: Fonts.manropeBold,
+      fontSize: Fonts.bigSize,
+      marginBottom: Spacing.xl2,
+      textAlign: 'center',
+    },
+    confirmDescription: {
+      color: Colors.neutral[600],
+      fontFamily: Fonts.interSemiBold,
+      fontSize: Fonts.mediumSize,
+      lineHeight: Math.round(Fonts.mediumSize * 1.28),
+      marginBottom: Spacing.xl3,
+      textAlign: 'center',
+    },
+    confirmActions: {
+      flexDirection: 'row',
+      justifyContent: 'flex-end',
+      gap: Spacing.xl2,
+    },
+    confirmButton: {
+      minHeight: scale(32),
+      justifyContent: 'center',
+      paddingHorizontal: Spacing.xs,
+    },
+    confirmNoText: {
+      color: Colors.ocean[600],
+      fontFamily: Fonts.interBold,
+      fontSize: Fonts.bigSize,
+    },
+    confirmYesText: {
+      color: Colors.orange[500],
+      fontFamily: Fonts.interBold,
+      fontSize: Fonts.bigSize,
+    },
+    successContent: {
+      flex: 1,
+      alignItems: 'center',
+      paddingHorizontal: Spacing.xl3,
+      paddingTop: Spacing.xl3,
+    },
+    successTitle: {
+      color: Colors.text,
+      fontFamily: Fonts.manropeBold,
+      fontSize: Fonts.subtitle,
+      marginBottom: Spacing.xl6,
+      textAlign: 'center',
+    },
+    successIconWrap: {
+      width: scale(112),
+      height: scale(112),
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 3,
+      borderColor: Colors.ocean[600],
+      borderRadius: CornerRadius.full,
+      marginBottom: Spacing.xl5,
+    },
+    successDescription: {
+      maxWidth: scale(320),
+      color: Colors.neutral[600],
+      fontFamily: Fonts.interBold,
+      fontSize: Fonts.subtitle,
+      lineHeight: Math.round(Fonts.subtitle * 1.24),
+      textAlign: 'center',
     },
   });
 }

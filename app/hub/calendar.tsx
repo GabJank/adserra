@@ -3,8 +3,9 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { Colors, useScaledTheme } from '@/constants/theme';
+import { hasAssociationAccess } from '@/src/access';
 import { useAppData } from '@/src/app-data';
-import { EventCalendar } from '@/src/components';
+import { EventCalendar, RestrictedAccessOverlay } from '@/src/components';
 import { getEventDateKey, type EventItem } from '@/src/events';
 
 const MONTHS = ['JAN', 'FEV', 'MAR', 'ABR', 'MAI', 'JUN', 'JUL', 'AGO', 'SET', 'OUT', 'NOV', 'DEZ'];
@@ -67,7 +68,7 @@ function formatEventTimeRange(item: EventItem) {
     return `Ate ${endTime}`;
   }
 
-  return 'Horario a definir';
+  return 'Horário a definir';
 }
 
 function getEventBadgeDate(item: EventItem) {
@@ -85,11 +86,12 @@ function getEventsForDate(events: EventItem[], dateKey: string) {
 }
 
 export default function CalendarScreen() {
-  const { eventDates, events, isEventsLoaded } = useAppData();
+  const { eventDates, events, isEventsLoaded, userProfile } = useAppData();
   const hasSyncedInitialDate = useRef(false);
   const [selectedDateKey, setSelectedDateKey] = useState(() => getDateKey(new Date()));
   const selectedDate = useMemo(() => parseDateKey(selectedDateKey), [selectedDateKey]);
   const dayEvents = useMemo(() => getEventsForDate(events, selectedDateKey), [events, selectedDateKey]);
+  const canAccessCalendar = hasAssociationAccess(userProfile?.status);
   const scaledTheme = useScaledTheme();
   const styles = useMemo(() => createStyles(scaledTheme), [scaledTheme]);
 
@@ -104,10 +106,14 @@ export default function CalendarScreen() {
 
   return (
     <View style={styles.screen}>
+      <View
+        importantForAccessibility={canAccessCalendar ? 'auto' : 'no-hide-descendants'}
+        pointerEvents={canAccessCalendar ? 'auto' : 'none'}
+        style={styles.content}>
       <Text style={styles.title}>Calendário</Text>
 
       <EventCalendar
-        eventDates={eventDates}
+        eventDates={canAccessCalendar ? eventDates : []}
         onSelectDate={(date) => setSelectedDateKey(getDateKey(date))}
         selectedDate={selectedDate}
         style={styles.calendar}
@@ -119,7 +125,7 @@ export default function CalendarScreen() {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}
         style={styles.cardScroll}>
-        {dayEvents.length > 0 ? (
+        {dayEvents.length > 0 && canAccessCalendar ? (
           <View style={styles.eventList}>
             {dayEvents.map((item) => {
               const badgeDate = getEventBadgeDate(item);
@@ -134,7 +140,7 @@ export default function CalendarScreen() {
                   <View style={styles.eventContent}>
                     <View style={styles.metaRow}>
                       <View style={styles.timeTag}>
-                        <Text style={styles.timeTagText}>Horario</Text>
+                        <Text style={styles.timeTagText}>Horário</Text>
                       </View>
                       <Text style={styles.timeText}>{formatEventTimeRange(item)}</Text>
                     </View>
@@ -166,6 +172,9 @@ export default function CalendarScreen() {
           </View>
         )}
       </ScrollView>
+      </View>
+
+      {!canAccessCalendar ? <RestrictedAccessOverlay message="CALENDÁRIO PERMITIDO SOMENTE A ASSOCIADOS" /> : null}
     </View>
   );
 }
@@ -173,6 +182,9 @@ export default function CalendarScreen() {
 function createStyles({ Colors, CornerRadius, Fonts, Heading, Spacing, scale }: ReturnType<typeof useScaledTheme>) {
   return StyleSheet.create({
     screen: {
+      flex: 1,
+    },
+    content: {
       flex: 1,
       paddingHorizontal: Spacing.xl,
       paddingTop: Spacing.xl3,

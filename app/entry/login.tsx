@@ -245,7 +245,7 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.sm,
   },
   inputBox: {
-    minHeight: 48,
+    minHeight: 56,
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.lg,
@@ -257,10 +257,11 @@ const styles = StyleSheet.create({
   },
   input: {
     flex: 1,
+    minHeight: 54,
     color: Colors.text,
     fontFamily: Fonts.inter,
     fontSize: Fonts.minorSize,
-    paddingVertical: 0,
+    paddingVertical: Spacing.md,
   },
   optionsRow: {
     flexDirection: 'row',

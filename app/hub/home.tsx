@@ -5,15 +5,17 @@ import { useMemo } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 import { Colors, CornerRadius, useScaledTheme } from '@/constants/theme';
+import { hasAssociationAccess } from '@/src/access';
 import { useAppData } from '@/src/app-data';
-import { EventCalendar } from '@/src/components';
+import { EventCalendar, RestrictedAccessOverlay } from '@/src/components';
 
 export default function HomeScreen() {
   const router = useRouter();
-  const { eventDates, firstNews, professorName } = useAppData();
+  const { eventDates, firstNews, professorName, userProfile } = useAppData();
   const scaledTheme = useScaledTheme();
   const styles = useMemo(() => createStyles(scaledTheme), [scaledTheme]);
   const { Heading } = scaledTheme;
+  const canAccessCalendar = hasAssociationAccess(userProfile?.status);
 
   return (
     <View style={styles.content}>
@@ -82,7 +84,20 @@ export default function HomeScreen() {
           </View>
         </View>
 
-        <EventCalendar eventDates={eventDates} />
+        <View style={styles.calendarLockWrap}>
+          <View
+            importantForAccessibility={canAccessCalendar ? 'auto' : 'no-hide-descendants'}
+            pointerEvents={canAccessCalendar ? 'auto' : 'none'}>
+            <EventCalendar eventDates={canAccessCalendar ? eventDates : []} />
+          </View>
+
+          {!canAccessCalendar ? (
+            <RestrictedAccessOverlay
+              message="CALENDÁRIO DE EVENTOS PERMITIDOS SOMENTE A ASSOCIADOS"
+              variant="compact"
+            />
+          ) : null}
+        </View>
       </View>
   );
 }
@@ -211,6 +226,11 @@ function createStyles({ Fonts, Heading, Spacing, scale }: ReturnType<typeof useS
       color: Colors.neutral[500],
       fontFamily: Fonts.inter,
       fontSize: Fonts.minorSize,
+    },
+    calendarLockWrap: {
+      position: 'relative',
+      overflow: 'hidden',
+      borderRadius: CornerRadius.xl,
     },
   });
 }

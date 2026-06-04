@@ -5,7 +5,9 @@ import { useMemo, useState } from 'react';
 import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 import { Colors, useScaledTheme, withOpacity } from '@/constants/theme';
+import { hasAssociationAccess } from '@/src/access';
 import { useAppData } from '@/src/app-data';
+import { RestrictedAccessOverlay } from '@/src/components';
 import { type EventItem } from '@/src/events';
 
 type FilterKey = 'all' | 'future-events' | 'future-prizes' | 'realized-events' | 'realized-prizes';
@@ -140,14 +142,15 @@ function getVisibleEvents(events: EventItem[], activeFilter: FilterKey) {
 
 export default function EventsScreen() {
   const router = useRouter();
-  const { events, isEventsLoaded } = useAppData();
+  const { events, isEventsLoaded, userProfile } = useAppData();
   const [activeFilter, setActiveFilter] = useState<FilterKey>('all');
   const visibleEvents = useMemo(() => getVisibleEvents(events, activeFilter), [activeFilter, events]);
+  const canAccessEvents = hasAssociationAccess(userProfile?.status);
   const scaledTheme = useScaledTheme();
   const styles = useMemo(() => createStyles(scaledTheme), [scaledTheme]);
 
   const renderEventList = () => {
-    if (visibleEvents.length > 0) {
+    if (visibleEvents.length > 0 && canAccessEvents) {
       return (
         <View style={styles.eventList}>
           {visibleEvents.map((item) => {
@@ -224,6 +227,10 @@ export default function EventsScreen() {
 
   return (
     <View style={styles.screen}>
+      <View
+        importantForAccessibility={canAccessEvents ? 'auto' : 'no-hide-descendants'}
+        pointerEvents={canAccessEvents ? 'auto' : 'none'}
+        style={styles.content}>
       <View style={styles.pageIntro}>
         <Text style={styles.title}>Calendário{'\n'}Institucional</Text>
         <Text style={styles.subtitle} numberOfLines={2}>Eventos e prêmios da ADSerra, atuais e futuros.</Text>
@@ -256,6 +263,9 @@ export default function EventsScreen() {
         style={styles.cardScroll}>
         {renderEventList()}
       </ScrollView>
+      </View>
+
+      {!canAccessEvents ? <RestrictedAccessOverlay message="EVENTOS PERMITIDOS SOMENTE A ASSOCIADOS" /> : null}
     </View>
   );
 }
@@ -263,6 +273,9 @@ export default function EventsScreen() {
 function createStyles({ Colors, CornerRadius, Fonts, Heading, Spacing, scale }: ReturnType<typeof useScaledTheme>) {
   return StyleSheet.create({
     screen: {
+      flex: 1,
+    },
+    content: {
       flex: 1,
       padding: Spacing.xl,
     },
