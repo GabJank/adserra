@@ -210,7 +210,7 @@ function createStyles({ Colors, CornerRadius, Fonts, Heading, Spacing, scale }: 
     },
     scrollContent: {
       paddingHorizontal: Spacing.xl,
-      paddingBottom: Spacing.xl9,
+      paddingBottom: Spacing.xl2,
     },
     eventList: {
       gap: Spacing.xl2,

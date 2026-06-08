@@ -2,13 +2,15 @@ import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import { useMemo, useState } from 'react';
-import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ref, remove } from 'firebase/database';
 
 import { Colors, useScaledTheme, withOpacity } from '@/constants/theme';
-import { hasAssociationAccess } from '@/src/access';
+import { hasAdminAccess, hasAssociationAccess } from '@/src/access';
 import { useAppData } from '@/src/app-data';
-import { RestrictedAccessOverlay } from '@/src/components';
+import { DeleteConfirmModal, RestrictedAccessOverlay } from '@/src/components';
 import { type EventItem } from '@/src/events';
+import { database } from '@/src/firebase';
 
 type FilterKey = 'all' | 'future-events' | 'future-prizes' | 'realized-events' | 'realized-prizes';
 
@@ -144,10 +146,67 @@ export default function EventsScreen() {
   const router = useRouter();
   const { events, isEventsLoaded, userProfile } = useAppData();
   const [activeFilter, setActiveFilter] = useState<FilterKey>('all');
+  const [selectedEventIds, setSelectedEventIds] = useState<string[]>([]);
+  const [pendingDeleteEventIds, setPendingDeleteEventIds] = useState<string[]>([]);
   const visibleEvents = useMemo(() => getVisibleEvents(events, activeFilter), [activeFilter, events]);
+  const selectedEventIdSet = useMemo(() => new Set(selectedEventIds), [selectedEventIds]);
   const canAccessEvents = hasAssociationAccess(userProfile?.status);
+  const isAdmin = hasAdminAccess(userProfile?.status);
+  const areAllVisibleEventsSelected = visibleEvents.length > 0 && visibleEvents.every((item) => selectedEventIdSet.has(item.id));
   const scaledTheme = useScaledTheme();
   const styles = useMemo(() => createStyles(scaledTheme), [scaledTheme]);
+
+  const toggleEventSelection = (eventId: string) => {
+    setSelectedEventIds((currentIds) =>
+      currentIds.includes(eventId) ? currentIds.filter((id) => id !== eventId) : [...currentIds, eventId]
+    );
+  };
+
+  const handleSelectVisibleEvents = () => {
+    setSelectedEventIds(areAllVisibleEventsSelected ? [] : visibleEvents.map((item) => item.id));
+  };
+
+  const handleCreateEvent = () => {
+    router.push('/hub/event-edit');
+  };
+
+  const handleEditEvent = (eventId: string) => {
+    router.push({ pathname: '/hub/event-edit', params: { id: eventId } });
+  };
+
+  const deleteEvents = async (eventIds: string[]) => {
+    if (!database || eventIds.length === 0) {
+      return;
+    }
+
+    const currentDatabase = database;
+
+    await Promise.all(eventIds.map((eventId) => remove(ref(currentDatabase, `events/${eventId}`))));
+    setSelectedEventIds((currentIds) => currentIds.filter((eventId) => !eventIds.includes(eventId)));
+  };
+
+  const handleDeleteEvents = (eventIds: string[]) => {
+    if (eventIds.length === 0) {
+      return;
+    }
+
+    setPendingDeleteEventIds(eventIds);
+  };
+
+  const handleCancelDeleteEvents = () => {
+    setPendingDeleteEventIds([]);
+  };
+
+  const handleConfirmDeleteEvents = () => {
+    const eventIds = pendingDeleteEventIds;
+
+    setPendingDeleteEventIds([]);
+
+    deleteEvents(eventIds).catch((error) => {
+      console.error('Failed to delete events:', error);
+      Alert.alert('Erro', 'Não foi possível apagar os eventos.');
+    });
+  };
 
   const renderEventList = () => {
     if (visibleEvents.length > 0 && canAccessEvents) {
@@ -160,8 +219,28 @@ export default function EventsScreen() {
               <TouchableOpacity
                 key={item.id}
                 activeOpacity={0.88}
-                onPress={() => router.push({ pathname: '/hub/detail', params: { id: item.id, type: 'event' } })}
-                style={styles.eventCard}>
+                onPress={() => {
+                  if (isAdmin && selectedEventIds.length > 0) {
+                    toggleEventSelection(item.id);
+                    return;
+                  }
+
+                  router.push({ pathname: '/hub/detail', params: { id: item.id, type: 'event' } });
+                }}
+                style={[styles.eventCard, selectedEventIdSet.has(item.id) && styles.selectedEventCard]}>
+                {isAdmin ? (
+                  <TouchableOpacity
+                    activeOpacity={0.8}
+                    onPress={() => toggleEventSelection(item.id)}
+                    style={styles.eventSelectButton}>
+                    <View style={[styles.eventSelectCircle, selectedEventIdSet.has(item.id) && styles.eventSelectCircleActive]}>
+                      {selectedEventIdSet.has(item.id) ? (
+                        <MaterialIcons name="check" size={16} color={Colors.card} />
+                      ) : null}
+                    </View>
+                  </TouchableOpacity>
+                ) : null}
+
                 {item.photoUrl ? (
                   <Image source={{ uri: item.photoUrl }} style={styles.eventImage} contentFit="cover" />
                 ) : (
@@ -203,7 +282,24 @@ export default function EventsScreen() {
                     </View>
                   ) : null}
 
-                  <MaterialIcons name="chevron-right" size={36} color={Colors.neutral[500]} style={styles.cardArrow} />
+                  {isAdmin ? (
+                    <View style={styles.adminCardActions}>
+                      <TouchableOpacity
+                        activeOpacity={0.8}
+                        onPress={() => handleEditEvent(item.id)}
+                        style={styles.adminCardButton}>
+                        <MaterialIcons name="edit" size={20} color={Colors.ocean[600]} />
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        activeOpacity={0.8}
+                        onPress={() => handleDeleteEvents([item.id])}
+                        style={styles.adminCardButton}>
+                        <MaterialIcons name="delete" size={20} color="#B3261E" />
+                      </TouchableOpacity>
+                    </View>
+                  ) : (
+                    <MaterialIcons name="chevron-right" size={36} color={Colors.neutral[500]} style={styles.cardArrow} />
+                  )}
                 </View>
               </TouchableOpacity>
             );
@@ -259,13 +355,44 @@ export default function EventsScreen() {
 
       <ScrollView
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={[styles.scrollContent, isAdmin && styles.adminScrollContent]}
         style={styles.cardScroll}>
         {renderEventList()}
       </ScrollView>
       </View>
 
       {!canAccessEvents ? <RestrictedAccessOverlay message="EVENTOS PERMITIDOS SOMENTE A ASSOCIADOS" /> : null}
+
+      {isAdmin && canAccessEvents ? (
+        <View style={styles.adminFloatingActions}>
+          <View style={styles.adminSelectionActions}>
+            <TouchableOpacity activeOpacity={0.82} onPress={handleSelectVisibleEvents} style={styles.adminActionPill}>
+              <Text style={styles.adminActionText}>
+                {areAllVisibleEventsSelected ? 'Limpar seleção' : 'Selecionar todos'}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              activeOpacity={0.82}
+              disabled={selectedEventIds.length === 0}
+              onPress={() => handleDeleteEvents(selectedEventIds)}
+              style={[styles.adminActionPill, styles.adminDeletePill, selectedEventIds.length === 0 && styles.adminActionDisabled]}>
+              <MaterialIcons name="delete" size={16} color="#B3261E" />
+              <Text style={[styles.adminActionText, styles.adminDeleteText]}>Apagar</Text>
+            </TouchableOpacity>
+          </View>
+
+          <TouchableOpacity activeOpacity={0.86} onPress={handleCreateEvent} style={styles.adminFab}>
+            <MaterialIcons name="add" size={28} color={Colors.card} />
+          </TouchableOpacity>
+        </View>
+      ) : null}
+
+      <DeleteConfirmModal
+        message="Ao deletar o evento será excluído para todos os usuários."
+        onCancel={handleCancelDeleteEvents}
+        onConfirm={handleConfirmDeleteEvents}
+        visible={pendingDeleteEventIds.length > 0}
+      />
     </View>
   );
 }
@@ -311,7 +438,10 @@ function createStyles({ Colors, CornerRadius, Fonts, Heading, Spacing, scale }: 
     },
     scrollContent: {
       paddingHorizontal: Spacing.xl,
-      paddingBottom: Spacing.xl9,
+      paddingBottom: Spacing.xl2,
+    },
+    adminScrollContent: {
+      paddingBottom: Spacing.xl,
     },
     filterChip: {
       minHeight: scale(28),
@@ -339,6 +469,8 @@ function createStyles({ Colors, CornerRadius, Fonts, Heading, Spacing, scale }: 
     eventCard: {
       overflow: 'hidden',
       height: scale(250),
+      borderWidth: 2,
+      borderColor: 'transparent',
       borderRadius: CornerRadius.xl3,
       backgroundColor: Colors.card,
       shadowColor: Colors.shadow,
@@ -346,6 +478,35 @@ function createStyles({ Colors, CornerRadius, Fonts, Heading, Spacing, scale }: 
       shadowOpacity: 0.08,
       shadowRadius: CornerRadius.lg,
       elevation: Spacing.xs,
+    },
+    selectedEventCard: {
+      borderColor: Colors.ocean[600],
+    },
+    eventSelectButton: {
+      position: 'absolute',
+      top: Spacing.md,
+      right: Spacing.md,
+      zIndex: 2,
+      width: scale(32),
+      height: scale(32),
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: CornerRadius.full,
+      backgroundColor: withOpacity(Colors.fullBlack, 0.12),
+    },
+    eventSelectCircle: {
+      width: scale(22),
+      height: scale(22),
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 2,
+      borderColor: Colors.card,
+      borderRadius: CornerRadius.full,
+      backgroundColor: withOpacity(Colors.fullBlack, 0.18),
+    },
+    eventSelectCircleActive: {
+      borderColor: Colors.ocean[600],
+      backgroundColor: Colors.ocean[600],
     },
     eventImage: {
       width: '100%',
@@ -423,6 +584,76 @@ function createStyles({ Colors, CornerRadius, Fonts, Heading, Spacing, scale }: 
       position: 'absolute',
       right: Spacing.md,
       bottom: Spacing.md,
+    },
+    adminCardActions: {
+      position: 'absolute',
+      right: Spacing.md,
+      bottom: Spacing.md,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: Spacing.md,
+    },
+    adminCardButton: {
+      width: scale(32),
+      height: scale(32),
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: CornerRadius.full,
+      backgroundColor: Colors.card,
+    },
+    adminFloatingActions: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: Spacing.lg,
+      paddingHorizontal: Spacing.xl,
+      paddingTop: Spacing.sm,
+      paddingBottom: Spacing.xl,
+    },
+    adminSelectionActions: {
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: Spacing.md,
+    },
+    adminActionPill: {
+      minHeight: scale(30),
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: Spacing.xs,
+      borderWidth: 1,
+      borderColor: Colors.ocean[600],
+      borderRadius: CornerRadius.full,
+      backgroundColor: Colors.card,
+      paddingHorizontal: Spacing.md,
+    },
+    adminDeletePill: {
+      borderColor: '#B3261E',
+    },
+    adminActionDisabled: {
+      opacity: 0.45,
+    },
+    adminActionText: {
+      color: Colors.text,
+      fontFamily: Fonts.interBold,
+      fontSize: Fonts.minorSize,
+    },
+    adminDeleteText: {
+      color: '#B3261E',
+    },
+    adminFab: {
+      width: scale(54),
+      height: scale(54),
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: CornerRadius.full,
+      backgroundColor: Colors.ocean[600],
+      shadowColor: Colors.shadow,
+      shadowOffset: { width: 0, height: Spacing.sm },
+      shadowOpacity: 0.18,
+      shadowRadius: CornerRadius.lg,
+      elevation: Spacing.xs,
     },
     emptyCard: {
       alignItems: 'center',

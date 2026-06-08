@@ -31,7 +31,7 @@ function getActiveTab(pathname: string): AppTabKey | null {
     return 'events';
   }
 
-  if (pathname.startsWith('/hub/news')) {
+  if (pathname.startsWith('/hub/news') && !pathname.startsWith('/hub/news-edit')) {
     return 'news';
   }
 
@@ -52,7 +52,12 @@ export default function RootLayout() {
   const activeTab = getActiveTab(pathname);
   const isProfileEdit = pathname.startsWith('/hub/profile/profile-edit');
   const isDetailScreen = pathname.startsWith('/hub/detail');
-  const showBackHeader = isProfileEdit || isDetailScreen;
+  const isEventEdit = pathname.startsWith('/hub/event-edit');
+  const isNewsEdit = pathname.startsWith('/hub/news-edit');
+  const isReports = pathname.startsWith('/hub/reports');
+  const isSystem = pathname.startsWith('/hub/system');
+  const isUsers = pathname.startsWith('/hub/users');
+  const showBackHeader = isProfileEdit || isDetailScreen || isEventEdit || isNewsEdit || isReports || isSystem || isUsers;
   const [interLoaded] = useInterFonts({
     Inter_400Regular,
     Inter_500Medium,

@@ -68,13 +68,13 @@ export default function RegisterScreen() {
       const { user } = credential;
 
       await updateProfile(user, { displayName: trimmedName });
-      await set(ref(database, `users/${user.uid}`), {
-        birthday: '',
-        department: '',
-        name: trimmedName,
-        phone: '',
-        since: new Date().toISOString(),
-      });
+      await Promise.all([
+        set(ref(database, `users/${user.uid}/birthday`), ''),
+        set(ref(database, `users/${user.uid}/department`), ''),
+        set(ref(database, `users/${user.uid}/name`), trimmedName),
+        set(ref(database, `users/${user.uid}/phone`), ''),
+        set(ref(database, `users/${user.uid}/since`), new Date().toISOString()),
+      ]);
       await sendEmailVerification(user);
       await signOut(auth);
       setIsRegistered(true);

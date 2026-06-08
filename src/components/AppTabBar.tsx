@@ -84,10 +84,6 @@ export function AppTabBar({ activeTab, items = defaultItems, onTabPress }: AppTa
 function createStyles({ Colors, CornerRadius, Fonts, Spacing, scale }: ReturnType<typeof useScaledTheme>) {
   return StyleSheet.create({
     tabBar: {
-      position: 'absolute',
-      left: 0,
-      right: 0,
-      bottom: 0,
       minHeight: scale(64),
       flexDirection: 'row',
       alignItems: 'center',
@@ -95,7 +91,7 @@ function createStyles({ Colors, CornerRadius, Fonts, Spacing, scale }: ReturnTyp
       backgroundColor: Colors.card,
       padding: Spacing.xs,
       shadowColor: Colors.shadow,
-      shadowOffset: { width: 0, height: Spacing.xs },
+      shadowOffset: { width: 0, height: -Spacing.xs },
       shadowOpacity: 0.2,
       elevation: Spacing.xl3,
     },
