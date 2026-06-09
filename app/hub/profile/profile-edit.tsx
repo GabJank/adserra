@@ -148,6 +148,14 @@ function formatStatusTitle(status: string) {
     return 'Associado';
   }
 
+  if (normalizedStatus === 'visitor') {
+    return 'Visitante';
+  }
+
+  if (normalizedStatus === 'blocked') {
+    return 'Bloqueado';
+  }
+
   if (!status) {
     return 'Não associado';
   }

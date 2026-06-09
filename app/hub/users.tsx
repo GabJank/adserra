@@ -13,7 +13,7 @@ type ManagedUser = UserProfile & {
   id: string;
 };
 
-type UserStatus = 'admin' | 'associated' | 'blocked';
+type UserStatus = 'admin' | 'associated' | 'blocked' | 'visitor';
 
 function normalizeUser(value: unknown, id: string): ManagedUser | null {
   if (!value || typeof value !== 'object') {
@@ -65,7 +65,7 @@ function getStatusLabel(status: string) {
     return 'Bloqueado';
   }
 
-  return 'Não associado';
+  return 'Visitante';
 }
 
 function getStatusTone(status: string) {
@@ -83,7 +83,7 @@ function getStatusTone(status: string) {
     return 'blocked';
   }
 
-  return 'default';
+  return 'visitor';
 }
 
 export default function UsersScreen() {
@@ -225,7 +225,6 @@ export default function UsersScreen() {
                       style={[
                         styles.statusChipText,
                         statusTone === 'admin' && styles.statusChipTextAdmin,
-                        statusTone === 'associated' && styles.statusChipTextAdmin,
                         statusTone === 'blocked' && styles.statusChipBlockedText,
                       ]}>
                       {isCurrentUser ? 'Você' : getStatusLabel(user.status)}
@@ -245,6 +244,20 @@ export default function UsersScreen() {
                     ]}>
                     <MaterialIcons name="verified-user" size={16} color={Colors.ocean[600]} />
                     <Text style={styles.actionText}>Associado</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    activeOpacity={0.82}
+                    disabled={isCurrentUser || normalizedStatus === 'visitor' || !normalizedStatus || isUpdating}
+                    onPress={() => updateUserStatus(user, 'visitor')}
+                    style={[
+                      styles.actionButton,
+                      styles.actionButtonBlue,
+                      (isCurrentUser || normalizedStatus === 'visitor' || !normalizedStatus || isUpdating) &&
+                        styles.actionButtonDisabled,
+                    ]}>
+                    <MaterialIcons name="person-outline" size={16} color={Colors.ocean[600]} />
+                    <Text style={styles.actionText}>Visitante</Text>
                   </TouchableOpacity>
 
                   <TouchableOpacity

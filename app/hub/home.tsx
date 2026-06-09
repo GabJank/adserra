@@ -1,26 +1,221 @@
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { Image } from 'expo-image';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
-import { useMemo } from 'react';
+import { onValue, ref } from 'firebase/database';
+import { useEffect, useMemo, useState } from 'react';
 import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 import { Colors, CornerRadius, useScaledTheme } from '@/constants/theme';
 import { hasAdminAccess, hasAssociationAccess } from '@/src/access';
 import { useAppData } from '@/src/app-data';
 import { EventCalendar, RestrictedAccessOverlay } from '@/src/components';
-import { LinearGradient } from 'expo-linear-gradient';
+import { database } from '@/src/firebase';
+
+type AdminSummaryMetric = 'associated' | 'visitors';
+
+type AdminUserCounts = Record<AdminSummaryMetric, number>;
+
+type AdminAlert = {
+  createdAt: Date | null;
+  description: string;
+  id: string;
+  timeLabel: string;
+  title: string;
+};
+
+const emptyAdminUserCounts: AdminUserCounts = {
+  associated: 0,
+  visitors: 0,
+};
+
+function getAdminUserCounts(value: unknown): AdminUserCounts {
+  if (!value || typeof value !== 'object') {
+    return emptyAdminUserCounts;
+  }
+
+  return Object.values(value as Record<string, unknown>).reduce<AdminUserCounts>(
+    (counts, userValue) => {
+      const user = userValue && typeof userValue === 'object' ? (userValue as { status?: unknown }) : null;
+      const status = typeof user?.status === 'string' ? user.status.trim().toLowerCase() : '';
+
+      if (status === 'associated' || status === 'admin') {
+        return { ...counts, associated: counts.associated + 1 };
+      }
+
+      return { ...counts, visitors: counts.visitors + 1 };
+    },
+    { ...emptyAdminUserCounts }
+  );
+}
+
+function getStringField(value: unknown) {
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function parseAlertDate(value: unknown) {
+  if (typeof value === 'number') {
+    const date = new Date(value);
+
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+
+  if (typeof value !== 'string' || !value.trim()) {
+    return null;
+  }
+
+  const date = new Date(value);
+
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function formatAlertTime(date: Date | null, fallback: string | null) {
+  if (!date) {
+    return fallback ?? '';
+  }
+
+  const diffInSeconds = Math.max(0, Math.floor((Date.now() - date.getTime()) / 1000));
+
+  if (diffInSeconds < 60) {
+    return 'agora';
+  }
+
+  const diffInMinutes = Math.floor(diffInSeconds / 60);
+
+  if (diffInMinutes < 60) {
+    return `há ${diffInMinutes} min`;
+  }
+
+  const diffInHours = Math.floor(diffInMinutes / 60);
+
+  if (diffInHours < 24) {
+    return `há ${diffInHours} h`;
+  }
+
+  const diffInDays = Math.floor(diffInHours / 24);
+
+  if (diffInDays < 7) {
+    return `há ${diffInDays} d`;
+  }
+
+  return new Intl.DateTimeFormat('pt-BR', {
+    day: '2-digit',
+    month: 'short',
+  }).format(date);
+}
+
+function normalizeAlert(value: unknown, id: string): AdminAlert | null {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+
+  const alert = value as {
+    createdAt?: unknown;
+    description?: unknown;
+    detail?: unknown;
+    message?: unknown;
+    time?: unknown;
+    timestamp?: unknown;
+    title?: unknown;
+  };
+  const createdAt = parseAlertDate(alert.createdAt ?? alert.timestamp ?? alert.time);
+  const fallbackTime = getStringField(alert.time);
+  const title = getStringField(alert.title) ?? 'Log de segurança';
+  const description =
+    getStringField(alert.description) ?? getStringField(alert.detail) ?? getStringField(alert.message) ?? '';
+
+  if (!title && !description) {
+    return null;
+  }
+
+  return {
+    createdAt,
+    description: description || 'Novo registro de segurança.',
+    id,
+    timeLabel: formatAlertTime(createdAt, fallbackTime),
+    title,
+  };
+}
+
+function getAdminAlerts(value: unknown) {
+  const entries = Array.isArray(value)
+    ? value.map((alert, index) => [String(index), alert] as const)
+    : value && typeof value === 'object'
+      ? Object.entries(value as Record<string, unknown>)
+      : [];
+
+  return entries
+    .map(([id, alert]) => normalizeAlert(alert, id))
+    .filter((alert): alert is AdminAlert => alert !== null)
+    .sort((firstAlert, secondAlert) => {
+      const firstTime = firstAlert.createdAt?.getTime() ?? 0;
+      const secondTime = secondAlert.createdAt?.getTime() ?? 0;
+
+      if (firstTime !== secondTime) {
+        return secondTime - firstTime;
+      }
+
+      return secondAlert.id.localeCompare(firstAlert.id, undefined, { numeric: true });
+    });
+}
 
 export default function HomeScreen() {
   const router = useRouter();
   const { eventDates, firstNews, professorName, userProfile } = useAppData();
+  const [adminUserCounts, setAdminUserCounts] = useState<AdminUserCounts>(emptyAdminUserCounts);
+  const [adminAlerts, setAdminAlerts] = useState<AdminAlert[]>([]);
+  const [selectedSummaryMetric, setSelectedSummaryMetric] = useState<AdminSummaryMetric>('associated');
   const scaledTheme = useScaledTheme();
   const styles = useMemo(() => createStyles(scaledTheme), [scaledTheme]);
   const { Heading } = scaledTheme;
   const canAccessCalendar = hasAssociationAccess(userProfile?.status);
   const isAdmin = hasAdminAccess(userProfile?.status);
   const adminGreetingName = userProfile?.name ? professorName : 'Admin';
+  const adminSummaryNumber = adminUserCounts[selectedSummaryMetric];
+  const adminSummaryTitle = selectedSummaryMetric === 'associated' ? 'Total de associados' : 'Total de visitantes';
+  const latestAdminAlert = adminAlerts[0] ?? null;
 
-  const handleAdminAlertsPress = () => undefined;
+  useEffect(() => {
+    if (!isAdmin || !database) {
+      setAdminUserCounts(emptyAdminUserCounts);
+      return;
+    }
+
+    const usersRef = ref(database, 'users');
+
+    return onValue(
+      usersRef,
+      (snapshot) => {
+        setAdminUserCounts(getAdminUserCounts(snapshot.val()));
+      },
+      (error) => {
+        console.error('Users count listener failed:', error);
+        setAdminUserCounts(emptyAdminUserCounts);
+      }
+    );
+  }, [isAdmin]);
+
+  useEffect(() => {
+    if (!isAdmin || !database) {
+      setAdminAlerts([]);
+      return;
+    }
+
+    const alertsRef = ref(database, 'alerts');
+
+    return onValue(
+      alertsRef,
+      (snapshot) => {
+        setAdminAlerts(getAdminAlerts(snapshot.val()));
+      },
+      (error) => {
+        console.error('Alerts listener failed:', error);
+        setAdminAlerts([]);
+      }
+    );
+  }, [isAdmin]);
+
+  const handleAdminAlertsPress = () => router.push('/hub/system');
   const handleAdminReportsPress = () => router.push('/hub/reports');
   const handleAdminNewEventPress = () => router.push('/hub/event-edit');
   const handleAdminSystemPress = () => router.push('/hub/system');
@@ -49,15 +244,39 @@ export default function HomeScreen() {
               <Text style={styles.adminSummaryEyebrow}>ASSOCIADOS</Text>
             </View>
 
-            <Text style={styles.adminSummaryTitle}>Total de associados</Text>
-            <Text style={styles.adminSummaryNumber}>450</Text>
+            <Text style={styles.adminSummaryTitle}>{adminSummaryTitle}</Text>
+            <Text style={styles.adminSummaryNumber}>{adminSummaryNumber}</Text>
 
             <View style={styles.adminSummaryTags}>
-              <TouchableOpacity style={styles.adminSummaryTag}>
-                <Text style={styles.adminSummaryTagText}>ATIVOS</Text>
+              <TouchableOpacity
+                activeOpacity={0.84}
+                onPress={() => setSelectedSummaryMetric('associated')}
+                style={[
+                  styles.adminSummaryTag,
+                  selectedSummaryMetric === 'associated' && styles.adminSummaryTagActive,
+                ]}>
+                <Text
+                  style={[
+                    styles.adminSummaryTagText,
+                    selectedSummaryMetric === 'associated' && styles.adminSummaryTagTextActive,
+                  ]}>
+                  ASSOCIADOS
+                </Text>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.adminSummaryTag}>
-                <Text style={styles.adminSummaryTagText}>PENDENTES</Text>
+              <TouchableOpacity
+                activeOpacity={0.84}
+                onPress={() => setSelectedSummaryMetric('visitors')}
+                style={[
+                  styles.adminSummaryTag,
+                  selectedSummaryMetric === 'visitors' && styles.adminSummaryTagActive,
+                ]}>
+                <Text
+                  style={[
+                    styles.adminSummaryTagText,
+                    selectedSummaryMetric === 'visitors' && styles.adminSummaryTagTextActive,
+                  ]}>
+                  VISITANTES
+                </Text>
               </TouchableOpacity>
             </View>
           </LinearGradient>
@@ -75,15 +294,19 @@ export default function HomeScreen() {
           </TouchableOpacity>
         </View>
 
-        <TouchableOpacity activeOpacity={0.86} style={styles.adminAlertCard}>
-          <MaterialIcons name="warning" size={18} color="#B3261E" />
+        <TouchableOpacity activeOpacity={0.86} onPress={handleAdminAlertsPress} style={styles.adminAlertCard}>
+          <MaterialIcons name={latestAdminAlert ? 'warning' : 'info'} size={18} color={latestAdminAlert ? '#B3261E' : Colors.ocean[600]} />
           <View style={styles.adminAlertTextBlock}>
             <View style={styles.adminAlertTopRow}>
-              <Text style={styles.adminAlertTitle}>Pagamento Pendente</Text>
-              <Text style={styles.adminAlertTime}>há 2 min</Text>
+              <Text style={[styles.adminAlertTitle, !latestAdminAlert && styles.adminAlertTitleInfo]} numberOfLines={1}>
+                {latestAdminAlert?.title ?? 'Nenhum alerta registrado'}
+              </Text>
+              {latestAdminAlert?.timeLabel ? (
+                <Text style={styles.adminAlertTime}>{latestAdminAlert.timeLabel}</Text>
+              ) : null}
             </View>
-            <Text style={styles.adminAlertDescription}>
-              3 Associados estão com a anuidade atrasada há mais de 30 dias.
+            <Text style={styles.adminAlertDescription} numberOfLines={2}>
+              {latestAdminAlert?.description ?? 'Os logs de segurança cadastrados em alerts aparecem aqui.'}
             </Text>
           </View>
           <MaterialIcons name="chevron-right" size={28} color={Colors.neutral[500]} />
@@ -270,10 +493,16 @@ function createStyles({ Fonts, Heading, Spacing, scale }: ReturnType<typeof useS
       backgroundColor: Colors.ocean[300],
       paddingHorizontal: Spacing.md,
     },
+    adminSummaryTagActive: {
+      backgroundColor: Colors.card,
+    },
     adminSummaryTagText: {
       color: Colors.card,
       fontFamily: Fonts.interBold,
       fontSize: Fonts.minorSize,
+    },
+    adminSummaryTagTextActive: {
+      color: Colors.ocean[600],
     },
     adminSectionHeader: {
       minHeight: scale(36),
@@ -329,6 +558,9 @@ function createStyles({ Fonts, Heading, Spacing, scale }: ReturnType<typeof useS
       color: '#B3261E',
       fontFamily: Fonts.manropeBold,
       fontSize: Fonts.bigSize,
+    },
+    adminAlertTitleInfo: {
+      color: Colors.ocean[600],
     },
     adminAlertTime: {
       color: Colors.neutral[500],

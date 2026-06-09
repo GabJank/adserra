@@ -34,6 +34,14 @@ function formatAccountStatus(status: string) {
     return 'Associado';
   }
 
+  if (status.toLowerCase() === 'visitor') {
+    return 'Visitante';
+  }
+
+  if (status.toLowerCase() === 'blocked') {
+    return 'Bloqueado';
+  }
+
   return status.charAt(0).toUpperCase() + status.slice(1);
 }
 

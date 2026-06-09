@@ -1,10 +1,12 @@
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
-import { type ComponentProps, useMemo } from 'react';
+import { onValue, ref } from 'firebase/database';
+import { type ComponentProps, useEffect, useMemo, useState } from 'react';
 import { ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 
 import { useScaledTheme } from '@/constants/theme';
 import { hasAdminAccess } from '@/src/access';
 import { useAppData } from '@/src/app-data';
+import { database } from '@/src/firebase';
 
 type MaterialIconName = ComponentProps<typeof MaterialIcons>['name'];
 
@@ -15,35 +17,132 @@ type MetricCard = {
   value: string;
 };
 
-const metrics: MetricCard[] = [
-  { icon: 'article', label: 'TOTAL DE DOWNLOADS', tone: 'blue', value: '1284' },
-  { icon: 'update', label: 'ÚLTIMA ATUALIZAÇÃO', tone: 'blue', value: 'Hoje, 08:30' },
-  { icon: 'groups', label: 'ASSOCIADOS EM DIA', tone: 'blue', value: '50' },
-  { icon: 'groups', label: 'ASSOCIADOS PENDENTES', tone: 'red', value: '20' },
-];
+type UserCounts = {
+  associated: number;
+  visitors: number;
+};
 
-const xLabels = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
-const yLabels = ['8000', '7000', '6000', '5000', '4000', '3000', '2000', '1000'];
-const blueSeries = [500, 2900, 2600, 4000, 3500, 5900, 5700, 6800];
-const amberSeries = [5200, 6100, 4500, 2700, 2900, 1800, 1500, 1200];
-const tealSeries = [6200, 7600, 5200, 2600, 4500, 2400, 3400, 2200];
+type UserReport = {
+  associatedSeries: number[];
+  chartMax: number;
+  counts: UserCounts;
+  totalSeries: number[];
+  visitorSeries: number[];
+  xLabels: string[];
+  yLabels: string[];
+};
 
-function getChartPoints(values: number[], chartWidth: number, chartHeight: number) {
-  const maxValue = 8000;
+const emptyUserCounts: UserCounts = {
+  associated: 0,
+  visitors: 0,
+};
+
+function isAssociatedStatus(status: string) {
+  return status === 'associated' || status === 'admin';
+}
+
+function parseSinceDate(value: unknown) {
+  if (typeof value !== 'string' || !value.trim()) {
+    return new Date();
+  }
+
+  const date = new Date(value);
+
+  return Number.isNaN(date.getTime()) ? new Date() : date;
+}
+
+function getMonthBuckets() {
+  const now = new Date();
+
+  return Array.from({ length: 8 }, (_, index) => {
+    const monthDate = new Date(now.getFullYear(), now.getMonth() - 7 + index, 1);
+    const endDate = new Date(monthDate.getFullYear(), monthDate.getMonth() + 1, 0, 23, 59, 59, 999);
+
+    return {
+      endDate,
+      label: new Intl.DateTimeFormat('pt-BR', { month: 'short' }).format(monthDate).replace('.', ''),
+    };
+  });
+}
+
+function getUserReport(value: unknown): UserReport {
+  const monthBuckets = getMonthBuckets();
+  const emptySeries = monthBuckets.map(() => 0);
+
+  if (!value || typeof value !== 'object') {
+    return {
+      associatedSeries: emptySeries,
+      chartMax: 4,
+      counts: emptyUserCounts,
+      totalSeries: emptySeries,
+      visitorSeries: emptySeries,
+      xLabels: monthBuckets.map((bucket) => bucket.label),
+      yLabels: ['4', '3', '2', '1', '0'],
+    };
+  }
+
+  const users = Object.values(value as Record<string, unknown>).map((userValue) => {
+    const user = userValue && typeof userValue === 'object' ? (userValue as { since?: unknown; status?: unknown }) : null;
+    const status = typeof user?.status === 'string' ? user.status.trim().toLowerCase() : '';
+
+    return {
+      associated: isAssociatedStatus(status),
+      sinceDate: parseSinceDate(user?.since),
+    };
+  });
+
+  const associatedSeries = monthBuckets.map((bucket) =>
+    users.filter((user) => user.associated && user.sinceDate.getTime() <= bucket.endDate.getTime()).length
+  );
+  const visitorSeries = monthBuckets.map((bucket) =>
+    users.filter((user) => !user.associated && user.sinceDate.getTime() <= bucket.endDate.getTime()).length
+  );
+  const totalSeries = associatedSeries.map((associatedCount, index) => associatedCount + visitorSeries[index]);
+  const highestValue = Math.max(1, ...totalSeries, ...associatedSeries, ...visitorSeries);
+  const chartMax = Math.max(4, Math.ceil(highestValue / 4) * 4);
+
+  return {
+    associatedSeries,
+    chartMax,
+    counts: {
+      associated: associatedSeries.at(-1) ?? 0,
+      visitors: visitorSeries.at(-1) ?? 0,
+    },
+    totalSeries,
+    visitorSeries,
+    xLabels: monthBuckets.map((bucket) => bucket.label),
+    yLabels: Array.from({ length: 5 }, (_, index) => String(Math.round(chartMax - (chartMax / 4) * index))),
+  };
+}
+
+function formatUpdateTime(date: Date | null) {
+  if (!date) {
+    return '--:--';
+  }
+
+  return `Hoje, ${new Intl.DateTimeFormat('pt-BR', {
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(date)}`;
+}
+
+function getChartPoints(values: number[], chartWidth: number, chartHeight: number, chartMax: number) {
   const step = chartWidth / (values.length - 1);
 
   return values.map((value, index) => ({
     x: step * index,
-    y: chartHeight - (value / maxValue) * chartHeight,
+    y: chartHeight - (value / chartMax) * chartHeight,
   }));
 }
 
 function LineSegments({
+  chartMax,
   chartHeight,
   chartWidth,
   color,
   values,
 }: {
+  chartMax: number;
   chartHeight: number;
   chartWidth: number;
   color: string;
@@ -53,7 +152,7 @@ function LineSegments({
   const { CornerRadius, scale } = scaledTheme;
   const lineThickness = scale(2);
   const dotSize = scale(4);
-  const points = getChartPoints(values, chartWidth, chartHeight);
+  const points = getChartPoints(values, chartWidth, chartHeight, chartMax);
 
   return (
     <>
@@ -103,6 +202,8 @@ export default function ReportsScreen() {
   const { width } = useWindowDimensions();
   const { userProfile } = useAppData();
   const isAdmin = hasAdminAccess(userProfile?.status);
+  const [userReport, setUserReport] = useState<UserReport>(() => getUserReport(null));
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null);
   const scaledTheme = useScaledTheme();
   const { Colors, Heading, Spacing, scale } = scaledTheme;
   const styles = useMemo(() => createStyles(scaledTheme), [scaledTheme]);
@@ -111,7 +212,39 @@ export default function ReportsScreen() {
     Math.floor(width - Spacing.xl * 2 - Spacing.lg * 2 - scale(26) - Spacing.xs)
   );
   const chartHeight = scale(142);
-  const chartBandWidth = chartWidth / xLabels.length;
+  const chartBandWidth = chartWidth / userReport.xLabels.length;
+  const metrics = useMemo<MetricCard[]>(
+    () => [
+      { icon: 'article', label: 'TOTAL DE DOWNLOADS', tone: 'blue', value: '0' },
+      { icon: 'update', label: 'ÚLTIMA ATUALIZAÇÃO', tone: 'blue', value: formatUpdateTime(lastUpdatedAt) },
+      { icon: 'groups', label: 'ASSOCIADOS', tone: 'blue', value: String(userReport.counts.associated) },
+      { icon: 'groups', label: 'VISITANTES', tone: 'red', value: String(userReport.counts.visitors) },
+    ],
+    [lastUpdatedAt, userReport.counts.associated, userReport.counts.visitors]
+  );
+
+  useEffect(() => {
+    if (!isAdmin || !database) {
+      setUserReport(getUserReport(null));
+      setLastUpdatedAt(null);
+      return;
+    }
+
+    const usersRef = ref(database, 'users');
+
+    return onValue(
+      usersRef,
+      (snapshot) => {
+        setUserReport(getUserReport(snapshot.val()));
+        setLastUpdatedAt(new Date());
+      },
+      (error) => {
+        console.error('Users report listener failed:', error);
+        setUserReport(getUserReport(null));
+        setLastUpdatedAt(null);
+      }
+    );
+  }, [isAdmin]);
 
   if (!isAdmin) {
     return (
@@ -156,7 +289,7 @@ export default function ReportsScreen() {
         <View style={styles.chartCard}>
           <View style={styles.chartBody}>
             <View style={[styles.yAxis, { height: chartHeight }]}>
-              {yLabels.map((label) => (
+              {userReport.yLabels.map((label) => (
                 <Text key={label} style={styles.axisLabel}>
                   {label}
                 </Text>
@@ -165,7 +298,7 @@ export default function ReportsScreen() {
 
             <View style={styles.chartAreaWrap}>
               <View style={[styles.chartArea, { width: chartWidth, height: chartHeight }]}>
-                {xLabels.map((label, index) => (
+                {userReport.xLabels.map((label, index) => (
                   <View
                     key={label}
                     style={[
@@ -179,18 +312,51 @@ export default function ReportsScreen() {
                   />
                 ))}
 
-                <LineSegments chartHeight={chartHeight} chartWidth={chartWidth} color={Colors.ocean[500]} values={blueSeries} />
-                <LineSegments chartHeight={chartHeight} chartWidth={chartWidth} color="#E1A300" values={amberSeries} />
-                <LineSegments chartHeight={chartHeight} chartWidth={chartWidth} color="#18B5BD" values={tealSeries} />
+                <LineSegments
+                  chartHeight={chartHeight}
+                  chartMax={userReport.chartMax}
+                  chartWidth={chartWidth}
+                  color={Colors.ocean[500]}
+                  values={userReport.totalSeries}
+                />
+                <LineSegments
+                  chartHeight={chartHeight}
+                  chartMax={userReport.chartMax}
+                  chartWidth={chartWidth}
+                  color="#18B5BD"
+                  values={userReport.associatedSeries}
+                />
+                <LineSegments
+                  chartHeight={chartHeight}
+                  chartMax={userReport.chartMax}
+                  chartWidth={chartWidth}
+                  color="#B3261E"
+                  values={userReport.visitorSeries}
+                />
               </View>
 
               <View style={[styles.xAxis, { width: chartWidth }]}>
-                {xLabels.map((label) => (
+                {userReport.xLabels.map((label) => (
                   <Text key={label} style={styles.axisLabel}>
                     {label}
                   </Text>
                 ))}
               </View>
+            </View>
+          </View>
+
+          <View style={styles.chartLegend}>
+            <View style={styles.legendItem}>
+              <View style={[styles.legendDot, { backgroundColor: Colors.ocean[500] }]} />
+              <Text style={styles.legendText}>Total</Text>
+            </View>
+            <View style={styles.legendItem}>
+              <View style={[styles.legendDot, { backgroundColor: '#18B5BD' }]} />
+              <Text style={styles.legendText}>Associados</Text>
+            </View>
+            <View style={styles.legendItem}>
+              <View style={[styles.legendDot, { backgroundColor: '#B3261E' }]} />
+              <Text style={styles.legendText}>Visitantes</Text>
             </View>
           </View>
         </View>
@@ -294,6 +460,28 @@ function createStyles({ Colors, CornerRadius, Fonts, Heading, Spacing, scale }: 
     chartBody: {
       flexDirection: 'row',
       gap: Spacing.xs,
+    },
+    chartLegend: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      justifyContent: 'center',
+      gap: Spacing.lg,
+      marginTop: Spacing.lg,
+    },
+    legendItem: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: Spacing.xs,
+    },
+    legendDot: {
+      width: scale(8),
+      height: scale(8),
+      borderRadius: CornerRadius.full,
+    },
+    legendText: {
+      color: Colors.neutral[600],
+      fontFamily: Fonts.interBold,
+      fontSize: Fonts.minorSize,
     },
     yAxis: {
       width: scale(26),
