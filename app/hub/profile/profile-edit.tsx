@@ -1,7 +1,7 @@
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { updatePassword } from 'firebase/auth';
-import { set, ref } from 'firebase/database';
+import { ref, set } from 'firebase/database';
 import { useMemo, useState } from 'react';
 import { Alert, KeyboardAvoidingView, Modal, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
@@ -210,8 +210,21 @@ function formatSinceDuration(since: string) {
   return 'Hoje';
 }
 
-async function submitAssociationRequest() {
-  return Promise.resolve();
+function getAssociationRequestStatus(userProfile: UserProfile | null) {
+  return userProfile?.associationRequest?.status.trim().toLowerCase() ?? '';
+}
+
+async function submitAssociationRequest(uid: string) {
+  if (!database) {
+    throw new Error('missing-database');
+  }
+
+  await set(ref(database, `users/${uid}/associationRequest`), {
+    requestedAt: new Date().toISOString(),
+    respondedAt: '',
+    respondedBy: '',
+    status: 'pending',
+  });
 }
 
 export default function ProfileEditScreen() {
@@ -221,11 +234,24 @@ export default function ProfileEditScreen() {
   const config = fieldConfig[editableField];
   const { userProfile } = useAppData();
   const accountStatus = userProfile?.status || '';
+  const associationRequestStatus = getAssociationRequestStatus(userProfile);
   const hasAccountStatus = Boolean(accountStatus.trim());
   const statusTitle = hasAccountStatus ? `${formatStatusTitle(accountStatus)} há` : formatStatusTitle(accountStatus);
-  const statusValue = hasAccountStatus ? formatSinceDuration(userProfile?.since || '') : 'Aguardando aprovação';
+  const statusValue =
+    associationRequestStatus === 'pending'
+      ? 'Solicitação pendente'
+      : associationRequestStatus === 'denied'
+        ? 'Solicitação recusada'
+        : hasAccountStatus
+          ? formatSinceDuration(userProfile?.since || '')
+          : 'Aguardando aprovação';
   const showStatusCheck = hasVerifiedStatus(accountStatus);
-  const canRequestAssociation = editableField === 'status' && !showStatusCheck;
+  const canRequestAssociation =
+    editableField === 'status' &&
+    !showStatusCheck &&
+    accountStatus.trim().toLowerCase() !== 'blocked' &&
+    associationRequestStatus !== 'pending' &&
+    associationRequestStatus !== 'denied';
   const [value, setValue] = useState(() =>
     isProfileEditableField(editableField) ? formatFieldValue(editableField, userProfile?.[editableField] ?? '') : ''
   );
@@ -287,7 +313,14 @@ export default function ProfileEditScreen() {
     setIsSubmittingAssociationRequest(true);
 
     try {
-      await submitAssociationRequest();
+      const uid = auth.currentUser?.uid;
+
+      if (!uid) {
+        Alert.alert('Erro', 'Não foi possível localizar sua conta.');
+        return;
+      }
+
+      await submitAssociationRequest(uid);
       setIsAssociationRequestRegistered(true);
     } catch (error) {
       console.error('Failed to submit association request:', error);

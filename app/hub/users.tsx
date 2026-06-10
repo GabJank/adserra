@@ -5,7 +5,8 @@ import { Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'rea
 
 import { useScaledTheme, withOpacity } from '@/constants/theme';
 import { hasAdminAccess } from '@/src/access';
-import { useAppData, type UserProfile } from '@/src/app-data';
+import { recordAdminAlert } from '@/src/alerts';
+import { useAppData, type AssociationRequest, type UserProfile } from '@/src/app-data';
 import { DeleteConfirmModal } from '@/src/components';
 import { auth, database } from '@/src/firebase';
 
@@ -15,6 +16,29 @@ type ManagedUser = UserProfile & {
 
 type UserStatus = 'admin' | 'associated' | 'blocked' | 'visitor';
 
+function normalizeAssociationRequest(value: unknown): AssociationRequest | null {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+
+  const request = value as Partial<Record<keyof AssociationRequest, unknown>>;
+
+  return {
+    requestedAt: typeof request.requestedAt === 'string' ? request.requestedAt.trim() : '',
+    respondedAt: typeof request.respondedAt === 'string' ? request.respondedAt.trim() : '',
+    respondedBy: typeof request.respondedBy === 'string' ? request.respondedBy.trim() : '',
+    status: typeof request.status === 'string' ? request.status.trim() : '',
+  };
+}
+
+function getAssociationRequestStatus(user: ManagedUser) {
+  return user.associationRequest?.status.trim().toLowerCase() ?? '';
+}
+
+function hasPendingAssociationRequest(user: ManagedUser) {
+  return getAssociationRequestStatus(user) === 'pending';
+}
+
 function normalizeUser(value: unknown, id: string): ManagedUser | null {
   if (!value || typeof value !== 'object') {
     return null;
@@ -23,6 +47,7 @@ function normalizeUser(value: unknown, id: string): ManagedUser | null {
   const user = value as Partial<Record<keyof UserProfile, unknown>>;
 
   return {
+    associationRequest: normalizeAssociationRequest(user.associationRequest),
     birthday: typeof user.birthday === 'string' ? user.birthday.trim() : '',
     department: typeof user.department === 'string' ? user.department.trim() : '',
     id,
@@ -43,6 +68,13 @@ function getManagedUsers(value: unknown) {
     .map(([id, user]) => normalizeUser(user, id))
     .filter((user): user is ManagedUser => user !== null)
     .sort((firstUser, secondUser) => {
+      const firstPendingOrder = hasPendingAssociationRequest(firstUser) ? 0 : 1;
+      const secondPendingOrder = hasPendingAssociationRequest(secondUser) ? 0 : 1;
+
+      if (firstPendingOrder !== secondPendingOrder) {
+        return firstPendingOrder - secondPendingOrder;
+      }
+
       const firstName = firstUser.name || firstUser.id;
       const secondName = secondUser.name || secondUser.id;
 
@@ -83,7 +115,15 @@ function getStatusTone(status: string) {
     return 'blocked';
   }
 
+  if (normalizedStatus === 'pending') {
+    return 'pending';
+  }
+
   return 'visitor';
+}
+
+function getAdminId() {
+  return auth.currentUser?.uid ?? 'admin';
 }
 
 export default function UsersScreen() {
@@ -137,13 +177,115 @@ export default function UsersScreen() {
     setUpdatingUserId(user.id);
 
     try {
+      const now = new Date().toISOString();
       await update(ref(database, `users/${user.id}`), {
-        since: user.since || new Date().toISOString(),
+        ...(status === 'associated'
+          ? {
+              associationRequest: {
+                requestedAt: user.associationRequest?.requestedAt ?? '',
+                respondedAt: now,
+                respondedBy: getAdminId(),
+                status: 'approved',
+              },
+            }
+          : {}),
+        since: status === 'associated' ? now : user.since || now,
         status,
+      });
+
+      await recordAdminAlert({
+        description: `${user.name || user.id} teve o status alterado para ${getStatusLabel(status)}.`,
+        path: `users/${user.id}/status`,
+        severity: status === 'blocked' ? 'warning' : 'info',
+        source: 'Usuários',
+        targetId: user.id,
+        title: 'Usuário atualizado',
       });
     } catch (error) {
       console.error('Failed to update user status:', error);
       Alert.alert('Erro', 'Não foi possível atualizar o usuário.');
+    } finally {
+      setUpdatingUserId(null);
+    }
+  };
+
+  const acceptAssociationRequest = async (user: ManagedUser) => {
+    if (!database || updatingUserId) {
+      return;
+    }
+
+    if (user.id === currentUserId) {
+      Alert.alert('Ação bloqueada', 'Você não pode alterar permissões da própria conta por aqui.');
+      return;
+    }
+
+    setUpdatingUserId(user.id);
+
+    try {
+      const now = new Date().toISOString();
+
+      await update(ref(database, `users/${user.id}`), {
+        associationRequest: {
+          requestedAt: user.associationRequest?.requestedAt ?? '',
+          respondedAt: now,
+          respondedBy: getAdminId(),
+          status: 'approved',
+        },
+        since: now,
+        status: 'associated',
+      });
+
+      await recordAdminAlert({
+        description: `${user.name || user.id} teve a solicitação de associação aprovada.`,
+        path: `users/${user.id}/associationRequest`,
+        source: 'Usuários',
+        targetId: user.id,
+        title: 'Associação aprovada',
+      });
+    } catch (error) {
+      console.error('Failed to accept association request:', error);
+      Alert.alert('Erro', 'Não foi possível aceitar a solicitação.');
+    } finally {
+      setUpdatingUserId(null);
+    }
+  };
+
+  const denyAssociationRequest = async (user: ManagedUser) => {
+    if (!database || updatingUserId) {
+      return;
+    }
+
+    if (user.id === currentUserId) {
+      Alert.alert('Ação bloqueada', 'Você não pode alterar permissões da própria conta por aqui.');
+      return;
+    }
+
+    setUpdatingUserId(user.id);
+
+    try {
+      const now = new Date().toISOString();
+
+      await update(ref(database, `users/${user.id}`), {
+        associationRequest: {
+          requestedAt: user.associationRequest?.requestedAt ?? '',
+          respondedAt: now,
+          respondedBy: getAdminId(),
+          status: 'denied',
+        },
+        status: user.status || 'visitor',
+      });
+
+      await recordAdminAlert({
+        description: `${user.name || user.id} teve a solicitação de associação recusada.`,
+        path: `users/${user.id}/associationRequest`,
+        severity: 'warning',
+        source: 'Usuários',
+        targetId: user.id,
+        title: 'Associação recusada',
+      });
+    } catch (error) {
+      console.error('Failed to deny association request:', error);
+      Alert.alert('Erro', 'Não foi possível recusar a solicitação.');
     } finally {
       setUpdatingUserId(null);
     }
@@ -160,13 +302,23 @@ export default function UsersScreen() {
       return;
     }
 
-    const userId = pendingDeleteUser.id;
+    const userToDelete = pendingDeleteUser;
+    const userId = userToDelete.id;
 
     setPendingDeleteUser(null);
     setUpdatingUserId(userId);
 
     try {
       await remove(ref(database, `users/${userId}`));
+
+      await recordAdminAlert({
+        description: `${userToDelete.name || userId} foi removido do sistema.`,
+        path: `users/${userId}`,
+        severity: 'warning',
+        source: 'Usuários',
+        targetId: userId,
+        title: 'Usuário deletado',
+      });
     } catch (error) {
       console.error('Failed to delete user:', error);
       Alert.alert('Erro', 'Não foi possível deletar o usuário.');
@@ -196,8 +348,11 @@ export default function UsersScreen() {
         <View style={styles.userList}>
           {users.map((user) => {
             const isCurrentUser = user.id === currentUserId;
+            const associationStatus = getAssociationRequestStatus(user);
+            const isAssociationPending = associationStatus === 'pending';
+            const isAssociationDenied = associationStatus === 'denied';
             const normalizedStatus = user.status.trim().toLowerCase();
-            const statusTone = getStatusTone(user.status);
+            const statusTone = isAssociationPending ? 'pending' : getStatusTone(user.status);
             const isUpdating = updatingUserId === user.id;
 
             return (
@@ -220,19 +375,65 @@ export default function UsersScreen() {
                       statusTone === 'admin' && styles.statusChipAdmin,
                       statusTone === 'associated' && styles.statusChipAssociated,
                       statusTone === 'blocked' && styles.statusChipBlocked,
+                      statusTone === 'pending' && styles.statusChipPending,
                     ]}>
                     <Text
                       style={[
                         styles.statusChipText,
                         statusTone === 'admin' && styles.statusChipTextAdmin,
                         statusTone === 'blocked' && styles.statusChipBlockedText,
+                        statusTone === 'pending' && styles.statusChipPendingText,
                       ]}>
-                      {isCurrentUser ? 'Você' : getStatusLabel(user.status)}
+                      {isCurrentUser ? 'Você' : isAssociationPending ? 'Pendente' : getStatusLabel(user.status)}
                     </Text>
                   </View>
                 </View>
 
+                {isAssociationPending ? (
+                  <View style={styles.pendingRequestBox}>
+                    <MaterialIcons name="pending-actions" size={18} color={Colors.ocean[600]} />
+                    <Text style={styles.pendingRequestText}>Solicitação de associação aguardando análise.</Text>
+                  </View>
+                ) : null}
+
+                {isAssociationDenied ? (
+                  <View style={styles.pendingRequestBox}>
+                    <MaterialIcons name="block" size={18} color="#B3261E" />
+                    <Text style={styles.pendingRequestText}>Solicitação recusada. O usuário não pode pedir novamente.</Text>
+                  </View>
+                ) : null}
+
                 <View style={styles.actionGrid}>
+                  {isAssociationPending ? (
+                    <>
+                      <TouchableOpacity
+                        activeOpacity={0.82}
+                        disabled={isCurrentUser || isUpdating}
+                        onPress={() => acceptAssociationRequest(user)}
+                        style={[
+                          styles.actionButton,
+                          styles.actionButtonBlue,
+                          (isCurrentUser || isUpdating) && styles.actionButtonDisabled,
+                        ]}>
+                        <MaterialIcons name="check-circle" size={16} color={Colors.ocean[600]} />
+                        <Text style={styles.actionText}>Aceitar</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        activeOpacity={0.82}
+                        disabled={isCurrentUser || isUpdating}
+                        onPress={() => denyAssociationRequest(user)}
+                        style={[
+                          styles.actionButton,
+                          styles.actionButtonWarning,
+                          (isCurrentUser || isUpdating) && styles.actionButtonDisabled,
+                        ]}>
+                        <MaterialIcons name="cancel" size={16} color="#B3261E" />
+                        <Text style={[styles.actionText, styles.actionTextDanger]}>Recusar</Text>
+                      </TouchableOpacity>
+                    </>
+                  ) : null}
+
                   <TouchableOpacity
                     activeOpacity={0.82}
                     disabled={isCurrentUser || normalizedStatus === 'associated' || isUpdating}
@@ -413,6 +614,9 @@ function createStyles({ Colors, CornerRadius, Fonts, Heading, Spacing, scale }: 
     statusChipBlocked: {
       backgroundColor: withOpacity('#B3261E', 0.14),
     },
+    statusChipPending: {
+      backgroundColor: withOpacity(Colors.orange[500], 0.16),
+    },
     statusChipText: {
       color: Colors.ocean[600],
       fontFamily: Fonts.interBold,
@@ -425,6 +629,25 @@ function createStyles({ Colors, CornerRadius, Fonts, Heading, Spacing, scale }: 
     },
     statusChipBlockedText: {
       color: '#B3261E',
+    },
+    statusChipPendingText: {
+      color: Colors.orange[500],
+    },
+    pendingRequestBox: {
+      minHeight: scale(34),
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: Spacing.md,
+      borderRadius: CornerRadius.md,
+      backgroundColor: Colors.ocean[100],
+      marginBottom: Spacing.lg,
+      paddingHorizontal: Spacing.md,
+    },
+    pendingRequestText: {
+      flex: 1,
+      color: Colors.neutral[600],
+      fontFamily: Fonts.interBold,
+      fontSize: Fonts.minorSize,
     },
     actionGrid: {
       flexDirection: 'row',

@@ -6,7 +6,8 @@ import { Linking, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'r
 
 import { Colors, useScaledTheme, withOpacity } from '@/constants/theme';
 import { useAppData } from '@/src/app-data';
-import { type EventItem } from '@/src/events';
+import { RichDescriptionText } from '@/src/components';
+import { parseEventDate, type EventItem } from '@/src/events';
 import { type NewsItem } from '@/src/news';
 
 type DetailKind = 'event' | 'news';
@@ -24,10 +25,9 @@ function formatEventDate(when: string | null) {
     return 'Data a definir';
   }
 
-  const dateOnly = when.match(/^\d{4}-\d{2}-\d{2}/)?.[0];
-  const date = new Date(dateOnly ?? when);
+  const date = parseEventDate(when);
 
-  if (Number.isNaN(date.getTime())) {
+  if (!date) {
     return 'Data a definir';
   }
 
@@ -148,7 +148,7 @@ export default function DetailScreen() {
         </View>
 
         <Text style={styles.title}>{event.title || 'Evento sem titulo'}</Text>
-        <Text style={styles.description}>{event.description || 'Sem descrição cadastrada.'}</Text>
+        <RichDescriptionText style={styles.description} value={event.description} />
 
         <View style={styles.metaList}>
           <View style={styles.metaRow}>
@@ -181,7 +181,7 @@ export default function DetailScreen() {
       </View>
 
       <Text style={styles.title}>{newsItem.title || 'Notícia sem titulo'}</Text>
-      <Text style={styles.description}>{newsItem.description || 'Sem descrição cadastrada.'}</Text>
+      <RichDescriptionText style={styles.description} value={newsItem.description} />
 
       {newsItem.url ? (
         <TouchableOpacity activeOpacity={0.8} onPress={() => Linking.openURL(newsItem.url || '')} style={styles.linkRow}>

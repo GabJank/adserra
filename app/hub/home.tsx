@@ -8,21 +8,14 @@ import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-nati
 
 import { Colors, CornerRadius, useScaledTheme } from '@/constants/theme';
 import { hasAdminAccess, hasAssociationAccess } from '@/src/access';
+import { getAdminAlerts, type AdminAlert } from '@/src/alerts';
 import { useAppData } from '@/src/app-data';
-import { EventCalendar, RestrictedAccessOverlay } from '@/src/components';
+import { EventCalendar, getPlainDescriptionText, RestrictedAccessOverlay } from '@/src/components';
 import { database } from '@/src/firebase';
 
 type AdminSummaryMetric = 'associated' | 'visitors';
 
 type AdminUserCounts = Record<AdminSummaryMetric, number>;
-
-type AdminAlert = {
-  createdAt: Date | null;
-  description: string;
-  id: string;
-  timeLabel: string;
-  title: string;
-};
 
 const emptyAdminUserCounts: AdminUserCounts = {
   associated: 0,
@@ -47,116 +40,6 @@ function getAdminUserCounts(value: unknown): AdminUserCounts {
     },
     { ...emptyAdminUserCounts }
   );
-}
-
-function getStringField(value: unknown) {
-  return typeof value === 'string' && value.trim() ? value.trim() : null;
-}
-
-function parseAlertDate(value: unknown) {
-  if (typeof value === 'number') {
-    const date = new Date(value);
-
-    return Number.isNaN(date.getTime()) ? null : date;
-  }
-
-  if (typeof value !== 'string' || !value.trim()) {
-    return null;
-  }
-
-  const date = new Date(value);
-
-  return Number.isNaN(date.getTime()) ? null : date;
-}
-
-function formatAlertTime(date: Date | null, fallback: string | null) {
-  if (!date) {
-    return fallback ?? '';
-  }
-
-  const diffInSeconds = Math.max(0, Math.floor((Date.now() - date.getTime()) / 1000));
-
-  if (diffInSeconds < 60) {
-    return 'agora';
-  }
-
-  const diffInMinutes = Math.floor(diffInSeconds / 60);
-
-  if (diffInMinutes < 60) {
-    return `há ${diffInMinutes} min`;
-  }
-
-  const diffInHours = Math.floor(diffInMinutes / 60);
-
-  if (diffInHours < 24) {
-    return `há ${diffInHours} h`;
-  }
-
-  const diffInDays = Math.floor(diffInHours / 24);
-
-  if (diffInDays < 7) {
-    return `há ${diffInDays} d`;
-  }
-
-  return new Intl.DateTimeFormat('pt-BR', {
-    day: '2-digit',
-    month: 'short',
-  }).format(date);
-}
-
-function normalizeAlert(value: unknown, id: string): AdminAlert | null {
-  if (!value || typeof value !== 'object') {
-    return null;
-  }
-
-  const alert = value as {
-    createdAt?: unknown;
-    description?: unknown;
-    detail?: unknown;
-    message?: unknown;
-    time?: unknown;
-    timestamp?: unknown;
-    title?: unknown;
-  };
-  const createdAt = parseAlertDate(alert.createdAt ?? alert.timestamp ?? alert.time);
-  const fallbackTime = getStringField(alert.time);
-  const title = getStringField(alert.title) ?? 'Log de segurança';
-  const description =
-    getStringField(alert.description) ?? getStringField(alert.detail) ?? getStringField(alert.message) ?? '';
-
-  if (!title && !description) {
-    return null;
-  }
-
-  return {
-    createdAt,
-    description: description || 'Novo registro de segurança.',
-    id,
-    timeLabel: formatAlertTime(createdAt, fallbackTime),
-    title,
-  };
-}
-
-function getAdminAlerts(value: unknown) {
-  const entries = Array.isArray(value)
-    ? value.map((alert, index) => [String(index), alert] as const)
-    : value && typeof value === 'object'
-      ? Object.entries(value as Record<string, unknown>)
-      : [];
-
-  return entries
-    .map(([id, alert]) => normalizeAlert(alert, id))
-    .filter((alert): alert is AdminAlert => alert !== null)
-    .sort((firstAlert, secondAlert) => {
-      const firstTime = firstAlert.createdAt?.getTime() ?? 0;
-      const secondTime = secondAlert.createdAt?.getTime() ?? 0;
-
-      if (firstTime !== secondTime) {
-        return secondTime - firstTime;
-      }
-
-      return secondAlert.id.localeCompare(firstAlert.id, undefined, { numeric: true });
-    });
 }
 
 export default function HomeScreen() {
@@ -391,7 +274,7 @@ export default function HomeScreen() {
           {firstNews?.title || 'Nenhuma noticia cadastrada'}
         </Text>
         <Text style={styles.newsDescription} numberOfLines={2}>
-          {firstNews?.description || 'Cadastre uma noticia no Realtime Database para exibir aqui.'}
+          {getPlainDescriptionText(firstNews?.description, 'Cadastre uma noticia no Realtime Database para exibir aqui.')}
         </Text>
       </View>
 

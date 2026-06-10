@@ -1,10 +1,11 @@
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
-import { Image } from 'expo-image';
+import * as ImagePicker from 'expo-image-picker';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { push, ref, set } from 'firebase/database';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -17,10 +18,15 @@ import {
 
 import { Colors, useScaledTheme } from '@/constants/theme';
 import { hasAdminAccess } from '@/src/access';
+import { recordAdminAlert } from '@/src/alerts';
 import { useAppData } from '@/src/app-data';
+import { PhotoUploadGrid, RichDescriptionEditor } from '@/src/components';
 import { database } from '@/src/firebase';
+import { hasSupabaseStorageConfig, uploadContentPhoto } from '@/src/supabase-storage';
 
 type EventCategory = 'event' | 'prize';
+
+const maxPhotoCount = 3;
 
 const categories: { label: string; value: EventCategory }[] = [
   { label: 'Evento', value: 'event' },
@@ -48,6 +54,28 @@ function formatDateInput(value: string) {
   return `${day}/${month}/${year}`;
 }
 
+function formatTimeInput(value: string) {
+  const digits = value.replace(/\D/g, '').slice(0, 4);
+  const hourDigits = digits.slice(0, 2);
+  const minuteDigits = digits.slice(2, 4);
+
+  if (digits.length <= 2) {
+    if (digits.length < 2) {
+      return hourDigits;
+    }
+
+    return String(Math.min(Number(hourDigits), 23)).padStart(2, '0');
+  }
+
+  const hour = String(Math.min(Number(hourDigits), 23)).padStart(2, '0');
+  const minute =
+    minuteDigits.length === 1
+      ? String(Math.min(Number(minuteDigits), 5))
+      : String(Math.min(Number(minuteDigits), 59)).padStart(2, '0');
+
+  return `${hour}:${minute}`;
+}
+
 function toDateInput(when: string | null | undefined) {
   const dateOnly = when?.match(/^\d{4}-\d{2}-\d{2}/)?.[0];
 
@@ -56,6 +84,40 @@ function toDateInput(when: string | null | undefined) {
   }
 
   const [year, month, day] = dateOnly.split('-');
+
+  return `${day}/${month}/${year}`;
+}
+
+function toTimeInput(time: string | null | undefined) {
+  const trimmedTime = time?.trim();
+
+  if (!trimmedTime) {
+    return '';
+  }
+
+  const date = new Date(trimmedTime);
+
+  if (!Number.isNaN(date.getTime())) {
+    const hour = String(date.getHours()).padStart(2, '0');
+    const minute = String(date.getMinutes()).padStart(2, '0');
+
+    return `${hour}:${minute}`;
+  }
+
+  const hourMatch = trimmedTime.match(/^(\d{1,2}):(\d{2})/);
+
+  if (hourMatch) {
+    return `${hourMatch[1].padStart(2, '0')}:${hourMatch[2]}`;
+  }
+
+  return formatTimeInput(trimmedTime);
+}
+
+function getTodayDateInput() {
+  const today = new Date();
+  const day = String(today.getDate()).padStart(2, '0');
+  const month = String(today.getMonth() + 1).padStart(2, '0');
+  const year = today.getFullYear();
 
   return `${day}/${month}/${year}`;
 }
@@ -70,6 +132,29 @@ function toEventDate(value: string) {
   return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
 }
 
+function toEventTime(value: string) {
+  const trimmedValue = value.trim();
+
+  if (!trimmedValue) {
+    return null;
+  }
+
+  const timeMatch = trimmedValue.match(/^(\d{1,2}):(\d{2})$/);
+
+  if (!timeMatch) {
+    return undefined;
+  }
+
+  const hour = Number(timeMatch[1]);
+  const minute = Number(timeMatch[2]);
+
+  if (hour > 23 || minute > 59) {
+    return undefined;
+  }
+
+  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+}
+
 export default function EventEditScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id?: string }>();
@@ -79,13 +164,27 @@ export default function EventEditScreen() {
   const isAdmin = hasAdminAccess(userProfile?.status);
   const [title, setTitle] = useState('');
   const [category, setCategory] = useState<EventCategory>('event');
-  const [date, setDate] = useState('');
+  const [date, setDate] = useState(() => getTodayDateInput());
+  const [endTime, setEndTime] = useState('');
+  const [startTime, setStartTime] = useState('');
   const [where, setWhere] = useState('');
-  const [photoUrl, setPhotoUrl] = useState('');
+  const [photoUrls, setPhotoUrls] = useState<string[]>([]);
   const [description, setDescription] = useState('');
   const [isSaving, setIsSaving] = useState(false);
+  const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
+  const isDescriptionFocusedRef = useRef(false);
+  const scrollRef = useRef<ScrollView>(null);
   const scaledTheme = useScaledTheme();
   const styles = useMemo(() => createStyles(scaledTheme), [scaledTheme]);
+
+  const scrollDescriptionIntoView = useCallback(() => {
+    requestAnimationFrame(() => {
+      scrollRef.current?.scrollToEnd({ animated: true });
+    });
+    setTimeout(() => {
+      scrollRef.current?.scrollToEnd({ animated: true });
+    }, 260);
+  }, []);
 
   useEffect(() => {
     if (!existingEvent) {
@@ -95,13 +194,114 @@ export default function EventEditScreen() {
     setTitle(existingEvent.title);
     setCategory(existingEvent.type === 'prize' ? 'prize' : 'event');
     setDate(toDateInput(existingEvent.when));
+    setEndTime(toTimeInput(existingEvent.ends));
+    setStartTime(toTimeInput(existingEvent.starts));
     setWhere(existingEvent.where ?? '');
-    setPhotoUrl(existingEvent.photoUrl ?? '');
+    setPhotoUrls(
+      existingEvent.photos.length > 0
+        ? existingEvent.photos.slice(0, maxPhotoCount)
+        : [existingEvent.photoUrl].filter((photoUrl): photoUrl is string => Boolean(photoUrl)).slice(0, maxPhotoCount)
+    );
     setDescription(existingEvent.description);
   }, [existingEvent]);
 
+  useEffect(() => {
+    const keyboardSubscription = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
+      () => {
+        if (isDescriptionFocusedRef.current) {
+          scrollDescriptionIntoView();
+        }
+      }
+    );
+
+    return () => keyboardSubscription.remove();
+  }, [scrollDescriptionIntoView]);
+
+  const handleDescriptionFocus = () => {
+    isDescriptionFocusedRef.current = true;
+    scrollDescriptionIntoView();
+  };
+
+  const handleDescriptionBlur = () => {
+    isDescriptionFocusedRef.current = false;
+  };
+
+  const handlePhotoUpload = async () => {
+    if (isUploadingPhoto) {
+      return;
+    }
+
+    const remainingPhotoSlots = maxPhotoCount - photoUrls.length;
+
+    if (remainingPhotoSlots <= 0) {
+      Alert.alert('Limite atingido', `Você pode adicionar no máximo ${maxPhotoCount} fotos.`);
+      return;
+    }
+
+    if (!hasSupabaseStorageConfig()) {
+      Alert.alert(
+        'Supabase não configurado',
+        'Configure EXPO_PUBLIC_SUPABASE_URL e EXPO_PUBLIC_SUPABASE_ANON_KEY no .env.local.'
+      );
+      return;
+    }
+
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+
+    if (!permission.granted) {
+      Alert.alert('Permissão necessária', 'Permita o acesso às fotos para escolher uma imagem.');
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      allowsEditing: remainingPhotoSlots === 1,
+      allowsMultipleSelection: remainingPhotoSlots > 1,
+      mediaTypes: ['images'],
+      quality: 0.86,
+      selectionLimit: remainingPhotoSlots,
+    });
+
+    if (result.canceled || !result.assets[0]) {
+      return;
+    }
+
+    setIsUploadingPhoto(true);
+
+    try {
+      const uploadedPhotoUrls = await Promise.all(
+        result.assets.slice(0, remainingPhotoSlots).map((asset) =>
+          uploadContentPhoto({
+            collection: 'events',
+            contentId: eventId,
+            mimeType: asset.mimeType,
+            uri: asset.uri,
+          })
+        )
+      );
+
+      setPhotoUrls((currentPhotoUrls) => [...currentPhotoUrls, ...uploadedPhotoUrls].slice(0, maxPhotoCount));
+    } catch (error) {
+      console.error('Failed to upload event photo:', error);
+      Alert.alert(
+        'Upload bloqueado',
+        error instanceof Error && error.message === 'supabase-storage-rls'
+          ? 'O Supabase bloqueou o envio por policy do Storage. Libere upload para events/ no bucket usado.'
+          : 'Não foi possível enviar a foto.'
+      );
+    } finally {
+      setIsUploadingPhoto(false);
+    }
+  };
+
+  const handleRemovePhoto = (photoIndex: number) => {
+    setPhotoUrls((currentPhotoUrls) => currentPhotoUrls.filter((_, index) => index !== photoIndex));
+  };
+
   const handleSave = async () => {
     const eventDate = toEventDate(date);
+    const eventEndTime = toEventTime(endTime);
+    const eventStartTime = toEventTime(startTime);
 
     if (!isAdmin) {
       Alert.alert('Acesso restrito', 'Somente administradores podem salvar eventos.');
@@ -110,6 +310,16 @@ export default function EventEditScreen() {
 
     if (!title.trim() || !eventDate) {
       Alert.alert('Dados incompletos', 'Preencha pelo menos título e data do evento.');
+      return;
+    }
+
+    if (category === 'event' && ((startTime.trim() && !eventStartTime) || (endTime.trim() && !eventEndTime))) {
+      Alert.alert('Horário inválido', 'Use o formato HH:mm, por exemplo 17:00.');
+      return;
+    }
+
+    if (isUploadingPhoto) {
+      Alert.alert('Aguarde', 'A foto ainda está sendo enviada.');
       return;
     }
 
@@ -122,16 +332,30 @@ export default function EventEditScreen() {
 
     try {
       const eventRef = eventId ? ref(database, `events/${eventId}`) : push(ref(database, 'events'));
-      const trimmedPhotoUrl = photoUrl.trim();
+      const savedEventId = eventRef.key ?? eventId ?? '';
+      const savedPhotoUrls = photoUrls.map((photoUrl) => photoUrl.trim()).filter(Boolean).slice(0, maxPhotoCount);
+      const trimmedTitle = title.trim();
 
       await set(eventRef, {
         description: description.trim(),
+        ends: category === 'event' ? eventEndTime : null,
         finished: existingEvent?.finished ?? false,
-        photos: trimmedPhotoUrl ? [trimmedPhotoUrl] : [],
-        title: title.trim(),
+        photos: savedPhotoUrls,
+        starts: category === 'event' ? eventStartTime : null,
+        title: trimmedTitle,
         type: category,
         when: eventDate,
         where: where.trim(),
+      });
+
+      await recordAdminAlert({
+        description: `${category === 'prize' ? 'Prêmio' : 'Evento'} "${trimmedTitle}" foi ${
+          eventId ? 'atualizado' : 'criado'
+        }.`,
+        path: savedEventId ? `events/${savedEventId}` : 'events',
+        source: 'Eventos',
+        targetId: savedEventId,
+        title: eventId ? 'Evento atualizado' : 'Evento criado',
       });
 
       router.back();
@@ -154,8 +378,13 @@ export default function EventEditScreen() {
   }
 
   return (
-    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.screen}>
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
+    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.screen}>
+      <ScrollView
+        ref={scrollRef}
+        keyboardDismissMode="on-drag"
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.scrollContent}>
         <Text style={styles.title}>
           {eventId ? 'Alterar evento, prêmio ou notificação' : 'Novo evento, prêmio ou notificação'}
         </Text>
@@ -198,7 +427,7 @@ export default function EventEditScreen() {
               keyboardType="number-pad"
               maxLength={10}
               onChangeText={(nextValue) => setDate(formatDateInput(nextValue))}
-              placeholder="22/04/2026"
+              placeholder={getTodayDateInput()}
               placeholderTextColor={Colors.neutral[500]}
               style={styles.iconInput}
               value={date}
@@ -206,6 +435,42 @@ export default function EventEditScreen() {
             <MaterialIcons name="calendar-today" size={18} color={Colors.neutral[500]} />
           </View>
         </View>
+
+        {category === 'event' ? (
+          <View style={styles.timeFieldRow}>
+            <View style={styles.timeField}>
+              <Text style={styles.label}>Início:</Text>
+              <View style={styles.iconInputBox}>
+                <TextInput
+                  keyboardType="number-pad"
+                  maxLength={5}
+                  onChangeText={(nextValue) => setStartTime(formatTimeInput(nextValue))}
+                  placeholder="17:00"
+                  placeholderTextColor={Colors.neutral[500]}
+                  style={styles.iconInput}
+                  value={startTime}
+                />
+                <MaterialIcons name="schedule" size={18} color={Colors.neutral[500]} />
+              </View>
+            </View>
+
+            <View style={styles.timeField}>
+              <Text style={styles.label}>Fim:</Text>
+              <View style={styles.iconInputBox}>
+                <TextInput
+                  keyboardType="number-pad"
+                  maxLength={5}
+                  onChangeText={(nextValue) => setEndTime(formatTimeInput(nextValue))}
+                  placeholder="20:00"
+                  placeholderTextColor={Colors.neutral[500]}
+                  style={styles.iconInput}
+                  value={endTime}
+                />
+                <MaterialIcons name="schedule" size={18} color={Colors.neutral[500]} />
+              </View>
+            </View>
+          </View>
+        ) : null}
 
         <View style={styles.fieldGroup}>
           <Text style={styles.label}>Local:</Text>
@@ -220,44 +485,23 @@ export default function EventEditScreen() {
 
         <View style={styles.fieldGroup}>
           <Text style={styles.label}>Foto:</Text>
-          <View style={styles.photoBox}>
-            {photoUrl.trim() ? (
-              <Image source={{ uri: photoUrl.trim() }} style={styles.photoPreview} contentFit="cover" />
-            ) : (
-              <>
-                <MaterialIcons name="cloud-upload" size={28} color={Colors.ocean[600]} />
-                <Text style={styles.photoHint}>Cole a URL da foto abaixo</Text>
-              </>
-            )}
-          </View>
-          <TextInput
-            autoCapitalize="none"
-            onChangeText={setPhotoUrl}
-            placeholder="https://..."
-            placeholderTextColor={Colors.neutral[500]}
-            style={[styles.inputBox, styles.photoUrlInput]}
-            value={photoUrl}
+          <PhotoUploadGrid
+            isUploading={isUploadingPhoto}
+            maxPhotos={maxPhotoCount}
+            onAddPhoto={handlePhotoUpload}
+            onRemovePhoto={handleRemovePhoto}
+            photos={photoUrls}
           />
         </View>
 
         <View style={styles.fieldGroup}>
           <Text style={styles.label}>Descrição:</Text>
-          <View style={styles.editorBox}>
-            <View style={styles.editorToolbar}>
-              <MaterialIcons name="format-bold" size={18} color={Colors.text} />
-              <MaterialIcons name="format-italic" size={18} color={Colors.text} />
-              <MaterialIcons name="link" size={18} color={Colors.text} />
-            </View>
-            <TextInput
-              multiline
-              onChangeText={setDescription}
-              placeholder="Descreva o conteúdo..."
-              placeholderTextColor={Colors.neutral[500]}
-              style={styles.descriptionInput}
-              textAlignVertical="top"
-              value={description}
-            />
-          </View>
+          <RichDescriptionEditor
+            onBlur={handleDescriptionBlur}
+            onChangeText={setDescription}
+            onFocus={handleDescriptionFocus}
+            value={description}
+          />
         </View>
 
         <View style={styles.formActions}>
@@ -335,6 +579,14 @@ function createStyles({ Colors, CornerRadius, Fonts, Heading, Spacing, scale }: 
       fontSize: Fonts.mediumSize,
       paddingVertical: Spacing.md,
     },
+    timeFieldRow: {
+      flexDirection: 'row',
+      gap: Spacing.lg,
+      marginBottom: Spacing.lg,
+    },
+    timeField: {
+      flex: 1,
+    },
     segmentedControl: {
       flexDirection: 'row',
       borderWidth: 1,
@@ -361,52 +613,6 @@ function createStyles({ Colors, CornerRadius, Fonts, Heading, Spacing, scale }: 
     },
     segmentTextActive: {
       color: Colors.card,
-    },
-    photoBox: {
-      minHeight: scale(126),
-      alignItems: 'center',
-      justifyContent: 'center',
-      overflow: 'hidden',
-      borderWidth: 1,
-      borderColor: Colors.neutral[200],
-      borderRadius: CornerRadius.md,
-      backgroundColor: Colors.card,
-      gap: Spacing.md,
-    },
-    photoPreview: {
-      width: '100%',
-      height: scale(126),
-    },
-    photoHint: {
-      color: Colors.text,
-      fontFamily: Fonts.inter,
-      fontSize: Fonts.mediumSize,
-    },
-    photoUrlInput: {
-      marginTop: Spacing.sm,
-    },
-    editorBox: {
-      minHeight: scale(136),
-      overflow: 'hidden',
-      borderWidth: 1,
-      borderColor: Colors.neutral[200],
-      borderRadius: CornerRadius.md,
-      backgroundColor: Colors.card,
-    },
-    editorToolbar: {
-      minHeight: scale(34),
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: Spacing.lg,
-      backgroundColor: Colors.neutral[100],
-      paddingHorizontal: Spacing.lg,
-    },
-    descriptionInput: {
-      minHeight: scale(96),
-      color: Colors.text,
-      fontFamily: Fonts.inter,
-      fontSize: Fonts.mediumSize,
-      padding: Spacing.lg,
     },
     formActions: {
       flexDirection: 'row',

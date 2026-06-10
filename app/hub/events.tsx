@@ -7,9 +7,10 @@ import { ref, remove } from 'firebase/database';
 
 import { Colors, useScaledTheme, withOpacity } from '@/constants/theme';
 import { hasAdminAccess, hasAssociationAccess } from '@/src/access';
+import { recordAdminAlert } from '@/src/alerts';
 import { useAppData } from '@/src/app-data';
 import { DeleteConfirmModal, RestrictedAccessOverlay } from '@/src/components';
-import { type EventItem } from '@/src/events';
+import { parseEventDate, type EventItem } from '@/src/events';
 import { database } from '@/src/firebase';
 
 type FilterKey = 'all' | 'future-events' | 'future-prizes' | 'realized-events' | 'realized-prizes';
@@ -31,10 +32,9 @@ function isUpcoming(item: EventItem) {
     return false;
   }
 
-  const dateOnly = item.when.match(/^\d{4}-\d{2}-\d{2}/)?.[0];
-  const date = new Date(dateOnly ?? item.when);
+  const date = parseEventDate(item.when);
 
-  if (Number.isNaN(date.getTime())) {
+  if (!date) {
     return false;
   }
 
@@ -46,10 +46,9 @@ function formatEventDate(when: string | null) {
     return 'Data a definir';
   }
 
-  const dateOnly = when.match(/^\d{4}-\d{2}-\d{2}/)?.[0];
-  const date = new Date(dateOnly ?? when);
+  const date = parseEventDate(when);
 
-  if (Number.isNaN(date.getTime())) {
+  if (!date) {
     return 'Data a definir';
   }
 
@@ -180,8 +179,23 @@ export default function EventsScreen() {
     }
 
     const currentDatabase = database;
+    const deletedEvents = eventIds
+      .map((eventId) => events.find((item) => item.id === eventId))
+      .filter((item): item is EventItem => Boolean(item));
 
     await Promise.all(eventIds.map((eventId) => remove(ref(currentDatabase, `events/${eventId}`))));
+
+    await recordAdminAlert({
+      description:
+        eventIds.length === 1
+          ? `Evento "${deletedEvents[0]?.title || eventIds[0]}" foi excluído.`
+          : `${eventIds.length} eventos foram excluídos.`,
+      path: eventIds.length === 1 ? `events/${eventIds[0]}` : 'events',
+      severity: 'warning',
+      source: 'Eventos',
+      targetId: eventIds.length === 1 ? eventIds[0] : null,
+      title: eventIds.length === 1 ? 'Evento deletado' : 'Eventos deletados',
+    });
     setSelectedEventIds((currentIds) => currentIds.filter((eventId) => !eventIds.includes(eventId)));
   };
 

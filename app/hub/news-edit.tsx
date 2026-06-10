@@ -1,10 +1,11 @@
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
-import { Image } from 'expo-image';
+import * as ImagePicker from 'expo-image-picker';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { push, ref, set } from 'firebase/database';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -17,8 +18,13 @@ import {
 
 import { Colors, useScaledTheme } from '@/constants/theme';
 import { hasAdminAccess } from '@/src/access';
+import { recordAdminAlert } from '@/src/alerts';
 import { useAppData } from '@/src/app-data';
+import { PhotoUploadGrid, RichDescriptionEditor } from '@/src/components';
 import { database } from '@/src/firebase';
+import { hasSupabaseStorageConfig, uploadContentPhoto } from '@/src/supabase-storage';
+
+const maxPhotoCount = 3;
 
 function getSingleParam(value: string | string[] | undefined) {
   return Array.isArray(value) ? value[0] : value;
@@ -34,11 +40,23 @@ export default function NewsEditScreen() {
   const [title, setTitle] = useState('');
   const [source, setSource] = useState('ADSerra');
   const [url, setUrl] = useState('');
-  const [photoUrl, setPhotoUrl] = useState('');
+  const [photoUrls, setPhotoUrls] = useState<string[]>([]);
   const [description, setDescription] = useState('');
   const [isSaving, setIsSaving] = useState(false);
+  const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
+  const isDescriptionFocusedRef = useRef(false);
+  const scrollRef = useRef<ScrollView>(null);
   const scaledTheme = useScaledTheme();
   const styles = useMemo(() => createStyles(scaledTheme), [scaledTheme]);
+
+  const scrollDescriptionIntoView = useCallback(() => {
+    requestAnimationFrame(() => {
+      scrollRef.current?.scrollToEnd({ animated: true });
+    });
+    setTimeout(() => {
+      scrollRef.current?.scrollToEnd({ animated: true });
+    }, 260);
+  }, []);
 
   useEffect(() => {
     if (!existingNews) {
@@ -48,9 +66,106 @@ export default function NewsEditScreen() {
     setTitle(existingNews.title);
     setSource(existingNews.source || 'ADSerra');
     setUrl(existingNews.url ?? '');
-    setPhotoUrl(existingNews.photoUrl ?? '');
+    setPhotoUrls(
+      existingNews.photos.length > 0
+        ? existingNews.photos.slice(0, maxPhotoCount)
+        : [existingNews.photoUrl].filter((photoUrl): photoUrl is string => Boolean(photoUrl)).slice(0, maxPhotoCount)
+    );
     setDescription(existingNews.description);
   }, [existingNews]);
+
+  useEffect(() => {
+    const keyboardSubscription = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
+      () => {
+        if (isDescriptionFocusedRef.current) {
+          scrollDescriptionIntoView();
+        }
+      }
+    );
+
+    return () => keyboardSubscription.remove();
+  }, [scrollDescriptionIntoView]);
+
+  const handleDescriptionFocus = () => {
+    isDescriptionFocusedRef.current = true;
+    scrollDescriptionIntoView();
+  };
+
+  const handleDescriptionBlur = () => {
+    isDescriptionFocusedRef.current = false;
+  };
+
+  const handlePhotoUpload = async () => {
+    if (isUploadingPhoto) {
+      return;
+    }
+
+    const remainingPhotoSlots = maxPhotoCount - photoUrls.length;
+
+    if (remainingPhotoSlots <= 0) {
+      Alert.alert('Limite atingido', `Você pode adicionar no máximo ${maxPhotoCount} fotos.`);
+      return;
+    }
+
+    if (!hasSupabaseStorageConfig()) {
+      Alert.alert(
+        'Supabase não configurado',
+        'Configure EXPO_PUBLIC_SUPABASE_URL e EXPO_PUBLIC_SUPABASE_ANON_KEY no .env.local.'
+      );
+      return;
+    }
+
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+
+    if (!permission.granted) {
+      Alert.alert('Permissão necessária', 'Permita o acesso às fotos para escolher uma imagem.');
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      allowsEditing: remainingPhotoSlots === 1,
+      allowsMultipleSelection: remainingPhotoSlots > 1,
+      mediaTypes: ['images'],
+      quality: 0.86,
+      selectionLimit: remainingPhotoSlots,
+    });
+
+    if (result.canceled || !result.assets[0]) {
+      return;
+    }
+
+    setIsUploadingPhoto(true);
+
+    try {
+      const uploadedPhotoUrls = await Promise.all(
+        result.assets.slice(0, remainingPhotoSlots).map((asset) =>
+          uploadContentPhoto({
+            collection: 'news',
+            contentId: newsId,
+            mimeType: asset.mimeType,
+            uri: asset.uri,
+          })
+        )
+      );
+
+      setPhotoUrls((currentPhotoUrls) => [...currentPhotoUrls, ...uploadedPhotoUrls].slice(0, maxPhotoCount));
+    } catch (error) {
+      console.error('Failed to upload news photo:', error);
+      Alert.alert(
+        'Upload bloqueado',
+        error instanceof Error && error.message === 'supabase-storage-rls'
+          ? 'O Supabase bloqueou o envio por policy do Storage. Libere upload para news/ no bucket usado.'
+          : 'Não foi possível enviar a foto.'
+      );
+    } finally {
+      setIsUploadingPhoto(false);
+    }
+  };
+
+  const handleRemovePhoto = (photoIndex: number) => {
+    setPhotoUrls((currentPhotoUrls) => currentPhotoUrls.filter((_, index) => index !== photoIndex));
+  };
 
   const handleSave = async () => {
     if (!isAdmin) {
@@ -63,6 +178,11 @@ export default function NewsEditScreen() {
       return;
     }
 
+    if (isUploadingPhoto) {
+      Alert.alert('Aguarde', 'A foto ainda está sendo enviada.');
+      return;
+    }
+
     if (!database) {
       Alert.alert('Erro', 'Não foi possível acessar o banco de dados.');
       return;
@@ -72,15 +192,25 @@ export default function NewsEditScreen() {
 
     try {
       const newsRef = newsId ? ref(database, `news/${newsId}`) : push(ref(database, 'news'));
-      const trimmedPhotoUrl = photoUrl.trim();
+      const savedNewsId = newsRef.key ?? newsId ?? '';
+      const savedPhotoUrls = photoUrls.map((photoUrl) => photoUrl.trim()).filter(Boolean).slice(0, maxPhotoCount);
+      const trimmedTitle = title.trim();
       const trimmedUrl = url.trim();
 
       await set(newsRef, {
         description: description.trim(),
-        photos: trimmedPhotoUrl ? [trimmedPhotoUrl] : [],
+        photos: savedPhotoUrls,
         source: source.trim() || 'ADSerra',
-        title: title.trim(),
+        title: trimmedTitle,
         url: trimmedUrl || null,
+      });
+
+      await recordAdminAlert({
+        description: `Notícia "${trimmedTitle}" foi ${newsId ? 'atualizada' : 'criada'}.`,
+        path: savedNewsId ? `news/${savedNewsId}` : 'news',
+        source: 'Notícias',
+        targetId: savedNewsId,
+        title: newsId ? 'Notícia atualizada' : 'Notícia criada',
       });
 
       router.back();
@@ -103,8 +233,13 @@ export default function NewsEditScreen() {
   }
 
   return (
-    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.screen}>
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
+    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.screen}>
+      <ScrollView
+        ref={scrollRef}
+        keyboardDismissMode="on-drag"
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.scrollContent}>
         <Text style={styles.title}>{newsId ? 'Alterar notícia ou novidade' : 'Nova notícia ou novidade'}</Text>
         <Text style={styles.subtitle}>Crie e arquive comunicados e atualizações personalizados para a ADSerra.</Text>
 
@@ -148,44 +283,23 @@ export default function NewsEditScreen() {
 
         <View style={styles.fieldGroup}>
           <Text style={styles.label}>Foto:</Text>
-          <View style={styles.photoBox}>
-            {photoUrl.trim() ? (
-              <Image source={{ uri: photoUrl.trim() }} style={styles.photoPreview} contentFit="cover" />
-            ) : (
-              <>
-                <MaterialIcons name="cloud-upload" size={28} color={Colors.ocean[600]} />
-                <Text style={styles.photoHint}>Cole a URL da foto abaixo</Text>
-              </>
-            )}
-          </View>
-          <TextInput
-            autoCapitalize="none"
-            onChangeText={setPhotoUrl}
-            placeholder="https://..."
-            placeholderTextColor={Colors.neutral[500]}
-            style={[styles.inputBox, styles.photoUrlInput]}
-            value={photoUrl}
+          <PhotoUploadGrid
+            isUploading={isUploadingPhoto}
+            maxPhotos={maxPhotoCount}
+            onAddPhoto={handlePhotoUpload}
+            onRemovePhoto={handleRemovePhoto}
+            photos={photoUrls}
           />
         </View>
 
         <View style={styles.fieldGroup}>
           <Text style={styles.label}>Descrição:</Text>
-          <View style={styles.editorBox}>
-            <View style={styles.editorToolbar}>
-              <MaterialIcons name="format-bold" size={18} color={Colors.text} />
-              <MaterialIcons name="format-italic" size={18} color={Colors.text} />
-              <MaterialIcons name="link" size={18} color={Colors.text} />
-            </View>
-            <TextInput
-              multiline
-              onChangeText={setDescription}
-              placeholder="Descreva o conteúdo..."
-              placeholderTextColor={Colors.neutral[500]}
-              style={styles.descriptionInput}
-              textAlignVertical="top"
-              value={description}
-            />
-          </View>
+          <RichDescriptionEditor
+            onBlur={handleDescriptionBlur}
+            onChangeText={setDescription}
+            onFocus={handleDescriptionFocus}
+            value={description}
+          />
         </View>
 
         <View style={styles.formActions}>
@@ -262,52 +376,6 @@ function createStyles({ Colors, CornerRadius, Fonts, Heading, Spacing, scale }: 
       fontFamily: Fonts.inter,
       fontSize: Fonts.mediumSize,
       paddingVertical: Spacing.md,
-    },
-    photoBox: {
-      minHeight: scale(126),
-      alignItems: 'center',
-      justifyContent: 'center',
-      overflow: 'hidden',
-      borderWidth: 1,
-      borderColor: Colors.neutral[200],
-      borderRadius: CornerRadius.md,
-      backgroundColor: Colors.card,
-      gap: Spacing.md,
-    },
-    photoPreview: {
-      width: '100%',
-      height: scale(126),
-    },
-    photoHint: {
-      color: Colors.text,
-      fontFamily: Fonts.inter,
-      fontSize: Fonts.mediumSize,
-    },
-    photoUrlInput: {
-      marginTop: Spacing.sm,
-    },
-    editorBox: {
-      minHeight: scale(136),
-      overflow: 'hidden',
-      borderWidth: 1,
-      borderColor: Colors.neutral[200],
-      borderRadius: CornerRadius.md,
-      backgroundColor: Colors.card,
-    },
-    editorToolbar: {
-      minHeight: scale(34),
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: Spacing.lg,
-      backgroundColor: Colors.neutral[100],
-      paddingHorizontal: Spacing.lg,
-    },
-    descriptionInput: {
-      minHeight: scale(96),
-      color: Colors.text,
-      fontFamily: Fonts.inter,
-      fontSize: Fonts.mediumSize,
-      padding: Spacing.lg,
     },
     formActions: {
       flexDirection: 'row',

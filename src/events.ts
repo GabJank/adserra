@@ -62,15 +62,33 @@ function getEventTypeOrder(type: string) {
   return type === 'event' ? 0 : type === 'prize' ? 1 : 2;
 }
 
+export function parseEventDate(value: string | null | undefined) {
+  if (!value) {
+    return null;
+  }
+
+  const dateOnly = value.match(/^(\d{4})-(\d{2})-(\d{2})/)?.slice(1);
+
+  if (dateOnly) {
+    const [year, month, day] = dateOnly.map(Number);
+    const localDate = new Date(year, month - 1, day);
+
+    return Number.isNaN(localDate.getTime()) ? null : localDate;
+  }
+
+  const date = new Date(value);
+
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
 function getEventTimestamp(item: EventItem) {
   if (!item.when) {
     return Number.MAX_SAFE_INTEGER;
   }
 
-  const dateOnly = item.when.match(/^\d{4}-\d{2}-\d{2}/)?.[0];
-  const timestamp = new Date(dateOnly ?? item.when).getTime();
+  const timestamp = parseEventDate(item.when)?.getTime();
 
-  return Number.isNaN(timestamp) ? Number.MAX_SAFE_INTEGER : timestamp;
+  return typeof timestamp === 'number' ? timestamp : Number.MAX_SAFE_INTEGER;
 }
 
 export function getEventDateKey(item: EventItem) {

@@ -85,6 +85,34 @@ function getEventsForDate(events: EventItem[], dateKey: string) {
   return events.filter((item) => getEventDateKey(item) === dateKey);
 }
 
+function getClosestEventDateKey(eventDates: string[]) {
+  const todayDate = parseDateKey(getDateKey(new Date()));
+  const todayTime = todayDate.getTime();
+
+  return [...new Set(eventDates)]
+    .map((dateKey) => {
+      const date = parseDateKey(dateKey);
+      const timestamp = date.getTime();
+
+      return {
+        dateKey,
+        distance: Math.abs(timestamp - todayTime),
+        isFuture: timestamp >= todayTime,
+      };
+    })
+    .sort((firstDate, secondDate) => {
+      if (firstDate.distance !== secondDate.distance) {
+        return firstDate.distance - secondDate.distance;
+      }
+
+      if (firstDate.isFuture !== secondDate.isFuture) {
+        return firstDate.isFuture ? -1 : 1;
+      }
+
+      return firstDate.dateKey.localeCompare(secondDate.dateKey);
+    })[0]?.dateKey;
+}
+
 export default function CalendarScreen() {
   const { eventDates, events, isEventsLoaded, userProfile } = useAppData();
   const hasSyncedInitialDate = useRef(false);
@@ -96,12 +124,14 @@ export default function CalendarScreen() {
   const styles = useMemo(() => createStyles(scaledTheme), [scaledTheme]);
 
   useEffect(() => {
-    if (hasSyncedInitialDate.current || !eventDates[0]) {
+    const closestEventDateKey = getClosestEventDateKey(eventDates);
+
+    if (hasSyncedInitialDate.current || !closestEventDateKey) {
       return;
     }
 
     hasSyncedInitialDate.current = true;
-    setSelectedDateKey(eventDates[0]);
+    setSelectedDateKey(closestEventDateKey);
   }, [eventDates]);
 
   return (

@@ -6,7 +6,15 @@ import { getEventDateKey, getEventItems, type EventItem } from '@/src/events';
 import { auth, database } from '@/src/firebase';
 import { getNewsItems, type NewsItem } from '@/src/news';
 
+export type AssociationRequest = {
+  requestedAt: string;
+  respondedAt: string;
+  respondedBy: string;
+  status: string;
+};
+
 export type UserProfile = {
+  associationRequest: AssociationRequest | null;
   birthday: string;
   department: string;
   name: string;
@@ -44,8 +52,20 @@ function normalizeProfile(value: unknown): UserProfile | null {
   }
 
   const profile = value as Partial<Record<keyof UserProfile, unknown>>;
+  const associationRequest =
+    profile.associationRequest && typeof profile.associationRequest === 'object'
+      ? (profile.associationRequest as Partial<Record<keyof AssociationRequest, unknown>>)
+      : null;
 
   return {
+    associationRequest: associationRequest
+      ? {
+          requestedAt: typeof associationRequest.requestedAt === 'string' ? associationRequest.requestedAt.trim() : '',
+          respondedAt: typeof associationRequest.respondedAt === 'string' ? associationRequest.respondedAt.trim() : '',
+          respondedBy: typeof associationRequest.respondedBy === 'string' ? associationRequest.respondedBy.trim() : '',
+          status: typeof associationRequest.status === 'string' ? associationRequest.status.trim() : '',
+        }
+      : null,
     birthday: typeof profile.birthday === 'string' ? profile.birthday.trim() : '',
     department: typeof profile.department === 'string' ? profile.department.trim() : '',
     name: typeof profile.name === 'string' ? profile.name.trim() : '',

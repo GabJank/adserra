@@ -7,8 +7,9 @@ import { Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'rea
 
 import { Colors, useScaledTheme, withOpacity } from '@/constants/theme';
 import { hasAdminAccess } from '@/src/access';
+import { recordAdminAlert } from '@/src/alerts';
 import { useAppData } from '@/src/app-data';
-import { DeleteConfirmModal } from '@/src/components';
+import { DeleteConfirmModal, getPlainDescriptionText } from '@/src/components';
 import { database } from '@/src/firebase';
 import { type NewsItem } from '@/src/news';
 
@@ -86,8 +87,23 @@ export default function NewsScreen() {
     }
 
     const currentDatabase = database;
+    const deletedNews = newsIds
+      .map((itemId) => news.find((item) => item.id === itemId))
+      .filter((item): item is NewsItem => Boolean(item));
 
     await Promise.all(newsIds.map((newsId) => remove(ref(currentDatabase, `news/${newsId}`))));
+
+    await recordAdminAlert({
+      description:
+        newsIds.length === 1
+          ? `Notícia "${deletedNews[0]?.title || newsIds[0]}" foi excluída.`
+          : `${newsIds.length} notícias foram excluídas.`,
+      path: newsIds.length === 1 ? `news/${newsIds[0]}` : 'news',
+      severity: 'warning',
+      source: 'Notícias',
+      targetId: newsIds.length === 1 ? newsIds[0] : null,
+      title: newsIds.length === 1 ? 'Notícia deletada' : 'Notícias deletadas',
+    });
     setSelectedNewsIds((currentIds) => currentIds.filter((newsId) => !newsIds.includes(newsId)));
   };
 
@@ -159,7 +175,7 @@ export default function NewsScreen() {
                       {item.url ?? item.source}
                     </Text>
                     <Text style={styles.description} numberOfLines={4}>
-                      {item.description || 'Sem descrição cadastrada.'}
+                      {getPlainDescriptionText(item.description, 'Sem descrição cadastrada.')}
                     </Text>
 
                     {item.photoUrl ? (
